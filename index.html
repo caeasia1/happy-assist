@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Happy Assist">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#178f85">
 <title>Happy Assist</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -754,6 +756,19 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
     <div class="field mt12"><label>ชื่อของคุณ</label><input id="ownerName" placeholder="ชื่อ-สกุล"></div>
     <button class="btn block" onclick="saveOwner()">บันทึกโปรไฟล์</button>
 
+    <div class="field mt12"><label>🔎 ขนาดตัวอักษร / หน้าจอ</label>
+      <select id="fontScale" onchange="setFontScale(this.value)">
+        <option value="1">ปกติ (100%)</option>
+        <option value="1.15">ใหญ่ (115%)</option>
+        <option value="1.3">ใหญ่มาก (130%)</option>
+        <option value="1.5">ใหญ่พิเศษ (150%)</option>
+      </select>
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:700;color:var(--text);margin-top:10px;cursor:pointer">
+      <input type="checkbox" id="liteMode" style="width:auto" onchange="setLite(this.checked)">
+      📱 โหมดกะทัดรัด — ซ่อนการเดินทาง & ใบเบิกเดินทาง
+    </label>
+
     <h3 style="font-size:13px;color:var(--navy);margin:16px 0 8px">☁️ Google Sheets</h3>
     <div class="field"><label>Google Client ID</label><input id="cfgClientId" placeholder="xxxx.apps.googleusercontent.com"></div>
     <div class="field"><label>Spreadsheet ID</label><input id="cfgSheetId" placeholder="เว้นว่าง = สร้างใหม่ตอนเชื่อมต่อ"></div>
@@ -924,7 +939,10 @@ let tasks=DB.get('tasks',[]), projects=DB.get('projects',[]), receipts=DB.get('r
 let healthCfg=DB.get('healthCfg',{target:1800,warn:140,danger:180});
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const save=()=>{DB.set('tasks',tasks);DB.set('projects',projects);DB.set('receipts',receipts);DB.set('trips',trips);DB.set('savedExp',savedExp);DB.set('money',money);DB.set('pets',pets);DB.set('petRecs',petRecs);DB.set('locLog',locLog);DB.set('foodLogs',foodLogs);DB.set('hstats',hstats);cloudPush()};
-const todayISO=()=>new Date().toISOString().split('T')[0];
+const isoLocal=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const todayISO=()=>isoLocal(new Date());
+const TZ=()=>(Intl.DateTimeFormat().resolvedOptions().timeZone)||'Asia/Bangkok'; // เปลี่ยนตามประเทศที่อยู่
+const dtLocal=d=>`${isoLocal(d)}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:00`;
 
 // ══════════════════ CONFIG (secretary_config) ══════════════════
 const CONFIG={
@@ -974,7 +992,7 @@ const SHEET_SCHEMA={
   receipts:['id','date','vendor','product','amount','warranty_date','category','receipt_url','warranty_url','type','note'],
   trips:['id','name','dest','dates','segments_json'],
   pets:['id','name','species','breed','dob','gender','photo_url'],
-  pet_records:['id','pet_id','type','date','detail','next_date','doc_url','amount'],
+  pet_records:['id','pet_id','type','date','detail','next_date','doc_url','amount','gcal_id'],
   location_log:['date','location','country','city'],
   expense_claims:['id','type','date','doc_no','data_json','pdf_url'],
   food_logs:['id','date','timestamp','name','calories','sugar_g','is_drink','drink_size_ml','note'],
@@ -1102,6 +1120,36 @@ function applyProfile(){
   const key=localStorage.getItem('gemini_key');if(key)document.getElementById('apiKey').value=key;
 }
 
+// ══════════════════ DISPLAY PREFS (font scale + lite mode) ══════════════════
+function setFontScale(v){localStorage.setItem('cae_fontScale',v);document.body.style.zoom=v}
+function setLite(on){localStorage.setItem('cae_lite',on?'1':'0');location.reload()}
+function applyDisplayPrefs(){
+  const fs=localStorage.getItem('cae_fontScale')||'1.3'; // ค่าเริ่มต้น: ใหญ่มาก
+  document.body.style.zoom=fs;
+  const sel=document.getElementById('fontScale');if(sel)sel.value=fs;
+  const liteLS=localStorage.getItem('cae_lite');
+  window.LITE=liteLS!==null?liteLS==='1':new URLSearchParams(location.search).has('lite');
+  const cb=document.getElementById('liteMode');if(cb)cb.checked=!!window.LITE;
+  if(window.LITE){
+    document.querySelectorAll('.side button[data-p="travel"]').forEach(b=>b.style.display='none');
+    document.querySelectorAll('#moreSheet .drawer-grid button').forEach(b=>{if((b.getAttribute('onclick')||'').includes("'travel'"))b.style.display='none'});
+    const tabs=document.querySelector('#page-exp .tabs');if(tabs)tabs.style.display='none';
+    const g=document.querySelector('#page-exp .tabs button[data-c="general"]');if(g)setClaimType(g);
+    const tt=document.getElementById('todayTrip');if(tt)tt.closest('.card').style.display='none';
+  }
+}
+// ══════════════════ DAY CHANGE WATCHER (กันปฏิทิน/หน้าหลักค้างวันเก่า) ══════════════════
+let lastDayISO=null;
+function dayWatch(){
+  const now=todayISO();
+  if(lastDayISO===null){lastDayISO=now;return}
+  if(now===lastDayISO)return;
+  lastDayISO=now;
+  calMonth=new Date();calMonth.setDate(1);selDay=null;
+  renderToday();renderCal();renderTasks();renderMoney();renderLoc();renderHealthPage();
+  const ed=document.getElementById('expDate');if(ed)ed.value=now;
+}
+
 // ══════════════════ CLOUD UI ══════════════════
 function setCloudUI(state){ // 'on' | 'err' | 'off'
   const d=document.getElementById('cloudDot');
@@ -1180,7 +1228,7 @@ async function gemini(parts){
   let t=j.candidates?.[0]?.content?.parts?.[0]?.text||'';
   return t.replace(/```json|```/g,'').trim();
 }
-function toDate(s){if(!s)return'';const d=new Date(s);return isNaN(d)?'':d.toISOString().split('T')[0]}
+function toDate(s){if(!s)return'';const d=new Date(s);return isNaN(d)?'':isoLocal(d)}
 function fmtDate(s){if(!s)return'';const d=new Date(s);if(isNaN(d))return s;return d.toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'numeric'})}
 function fmtNum(n){return (Math.round((+n||0)*100)/100).toLocaleString()}
 
@@ -1328,7 +1376,7 @@ function gcalItem(e){
 function renderTasks(){
   const iso=todayISO();
   const tm=new Date();tm.setDate(tm.getDate()+1);
-  const tmr=tm.toISOString().split('T')[0];
+  const tmr=isoLocal(tm);
   const srt=(a,b)=>(a.date||'9999').localeCompare(b.date||'9999')||(a.time||'99').localeCompare(b.time||'99');
   const el=document.getElementById('taskList');
   el.innerHTML='';
@@ -1430,15 +1478,18 @@ const GCal={
   }
 };
 function taskToEvent(t){
-  const ev={summary:t.title,description:t.note||''};
+  const ev={summary:t.title,description:t.note||'',reminders:{useDefault:false,overrides:[]}};
   if(t.time){
-    const endD=new Date(`${t.date}T${t.time}:00+07:00`);
+    const endD=new Date(`${t.date}T${t.time}:00`); // เวลาท้องถิ่นตามประเทศที่อยู่ตอนนี้
     endD.setHours(endD.getHours()+1);
-    ev.start={dateTime:`${t.date}T${t.time}:00`,timeZone:'Asia/Bangkok'};
-    ev.end={dateTime:endD.toISOString(),timeZone:'UTC'};
+    ev.start={dateTime:`${t.date}T${t.time}:00`,timeZone:TZ()};
+    ev.end={dateTime:dtLocal(endD),timeZone:TZ()};
+    ev.reminders.overrides=[{method:'popup',minutes:30}]; // เด้งก่อน 30 นาที
   }else{
-    const nd=new Date(t.date);nd.setDate(nd.getDate()+1);
-    ev.start={date:t.date};ev.end={date:nd.toISOString().split('T')[0]};
+    // งานไม่ระบุเวลา → นัด 09:00 ตามเวลาท้องถิ่น
+    ev.start={dateTime:`${t.date}T09:00:00`,timeZone:TZ()};
+    ev.end={dateTime:`${t.date}T09:30:00`,timeZone:TZ()};
+    ev.reminders.overrides=[{method:'popup',minutes:0}]; // เด้งตอน 09:00
   }
   return ev;
 }
@@ -2063,14 +2114,17 @@ async function syncTripToGCal(trip){
     for(const s of (trip.segments||[])){
       if(!s.date)continue;
       const body={summary:(s.title||trip.name),location:s.location||'',description:`✈️ ทริป: ${trip.name} (Happy Assist)`,
-        extendedProperties:{private:{happyTrip:trip.id}}};
+        extendedProperties:{private:{happyTrip:trip.id}},
+        reminders:{useDefault:false,overrides:s.time
+          ?[{method:'popup',minutes:1440},{method:'popup',minutes:60}]   // ล่วงหน้า 1 วัน + 1 ชม.
+          :[{method:'popup',minutes:900}]}};                              // 09:00 เช้าวันก่อนหน้า
       if(s.time){
-        const end=new Date(`${s.date}T${s.time}:00+07:00`);end.setHours(end.getHours()+1);
-        body.start={dateTime:`${s.date}T${s.time}:00`,timeZone:'Asia/Bangkok'};
-        body.end={dateTime:end.toISOString(),timeZone:'UTC'};
+        const end=new Date(`${s.date}T${s.time}:00`);end.setHours(end.getHours()+1);
+        body.start={dateTime:`${s.date}T${s.time}:00`,timeZone:TZ()};
+        body.end={dateTime:dtLocal(end),timeZone:TZ()};
       }else{
         const nd=new Date(s.date);nd.setDate(nd.getDate()+1);
-        body.start={date:s.date};body.end={date:nd.toISOString().split('T')[0]};
+        body.start={date:s.date};body.end={date:isoLocal(nd)};
       }
       await GCal.api('/calendars/primary/events',{method:'POST',body:JSON.stringify(body)});n++;
     }
@@ -2383,11 +2437,34 @@ function savePetRec(){
   const data={pet_id:petId,type:t,date:document.getElementById('precDate').value,
     detail,next_date:(t==='vaccine'||t==='flea')?document.getElementById('precNext').value:'',
     amount:document.getElementById('precAmount').value||''};
-  if(id){Object.assign(petRecs.find(x=>x.id===id),data)}else{petRecs.push({id:uid(),...data})}
+  let rec;
+  if(id){rec=petRecs.find(x=>x.id===id);Object.assign(rec,data)}else{rec={id:uid(),...data};petRecs.push(rec)}
   save();viewPet(petId);renderPets();toast('บันทึกประวัติแล้ว');
   if(data.next_date&&typeof Notification!=='undefined'&&Notification.permission==='default')Notification.requestPermission();
+  pushPetRecToGCal(rec);
 }
-function delPetRec(recId,petId){if(confirm('ลบประวัตินี้?')){petRecs=petRecs.filter(x=>x.id!==recId);save();viewPet(petId);renderPets()}}
+function delPetRec(recId,petId){
+  if(!confirm('ลบประวัตินี้?'))return;
+  const r=petRecs.find(x=>x.id===recId);
+  if(r?.gcal_id)gcalDelete(r.gcal_id);
+  petRecs=petRecs.filter(x=>x.id!==recId);save();viewPet(petId);renderPets();
+}
+async function pushPetRecToGCal(r){
+  if(cfg.offline||!cfg.clientId)return;
+  if(!r.next_date){if(r.gcal_id){gcalDelete(r.gcal_id);r.gcal_id='';DB.set('petRecs',petRecs)}return}
+  try{
+    const p=pets.find(x=>x.id===r.pet_id);
+    const title=`${r.type==='flea'?'💊':'💉'} ${p?p.name:'สัตว์เลี้ยง'}: ${(r.detail||'นัด').split('\n')[0]}`;
+    const body={summary:title,description:'นัดสัตว์เลี้ยง — Happy Assist 🐾',
+      start:{dateTime:`${r.next_date}T09:00:00`,timeZone:TZ()},
+      end:{dateTime:`${r.next_date}T09:30:00`,timeZone:TZ()},
+      reminders:{useDefault:false,overrides:[{method:'popup',minutes:1440},{method:'popup',minutes:0}]},
+      extendedProperties:{private:{happyPet:r.id}}};
+    if(r.gcal_id){await GCal.api(`/calendars/primary/events/${r.gcal_id}`,{method:'PUT',body:JSON.stringify(body)})}
+    else{const j=await GCal.api('/calendars/primary/events',{method:'POST',body:JSON.stringify(body)});r.gcal_id=j.id;DB.set('petRecs',petRecs)}
+    toast('📆 ตั้งเตือนใน Google Calendar แล้ว (เด้งแม้ปิดแอป)');
+  }catch(e){console.warn('pet gcal:',e.message)}
+}
 
 // ══════════════════ LOCATION LOG + DAILY CHECK-IN ══════════════════
 function toggleAbroad(){const w=document.getElementById('abroadWrap');w.style.display=w.style.display==='none'?'block':'none'}
@@ -2614,7 +2691,7 @@ function renderHist(){
 }
 
 // ── Dashboard health charts (SVG, no lib) ──
-function last7Days(){const out=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);out.push(d.toISOString().split('T')[0])}return out}
+function last7Days(){const out=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);out.push(isoLocal(d))}return out}
 function dayLbl(ds){return ['อา','จ','อ','พ','พฤ','ศ','ส'][new Date(ds).getDay()]}
 function svgBarChart(data,target){
   const W=330,H=112,PD=22;
@@ -2708,8 +2785,8 @@ const SYNC={
       return {id:r.id,name:r.name,species:r.species,breed:r.breed,dob:r.dob,gender:r.gender,photo_url:r.photo_url,photo:old.photo||''}})}
   },
   pet_records:{
-    get:()=>petRecs.map(r=>({id:r.id,pet_id:r.pet_id,type:r.type||'',date:r.date||'',detail:r.detail||'',next_date:r.next_date||'',doc_url:r.doc_url||'',amount:r.amount||''})),
-    put:rows=>{petRecs=rows.filter(r=>r.id).map(r=>({id:r.id,pet_id:r.pet_id,type:r.type,date:r.date,detail:r.detail,next_date:r.next_date,doc_url:r.doc_url,amount:r.amount||''}))}
+    get:()=>petRecs.map(r=>({id:r.id,pet_id:r.pet_id,type:r.type||'',date:r.date||'',detail:r.detail||'',next_date:r.next_date||'',doc_url:r.doc_url||'',amount:r.amount||'',gcal_id:r.gcal_id||''})),
+    put:rows=>{petRecs=rows.filter(r=>r.id).map(r=>({id:r.id,pet_id:r.pet_id,type:r.type,date:r.date,detail:r.detail,next_date:r.next_date,doc_url:r.doc_url,amount:r.amount||'',gcal_id:r.gcal_id||''}))}
   },
   location_log:{
     get:()=>locLog.map(l=>({date:l.date,location:l.location||'',country:l.country||'',city:l.city||''})),
@@ -2758,19 +2835,6 @@ async function cloudPull(){
 // ══════════════════ PWA ══════════════════
 function initPWA(){
   try{
-    const c=document.createElement('canvas');c.width=c.height=192;
-    const g=c.getContext('2d');
-    g.fillStyle='#178f85';
-    if(g.roundRect){g.beginPath();g.roundRect(0,0,192,192,36);g.fill()}else g.fillRect(0,0,192,192);
-    g.font='110px serif';g.textAlign='center';g.textBaseline='middle';g.fillText('🎉',96,104);
-    const icon=c.toDataURL('image/png');
-    const manifest={name:'Happy Assist',short_name:'Happy Assist',start_url:location.href.split('#')[0],
-      display:'standalone',background_color:'#fdf7f2',theme_color:'#178f85',
-      icons:[{src:icon,sizes:'192x192',type:'image/png'},{src:icon,sizes:'512x512',type:'image/png'}]};
-    const link=document.createElement('link');link.rel='manifest';
-    link.href=URL.createObjectURL(new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'}));
-    document.head.appendChild(link);
-    const meta=document.createElement('meta');meta.name='theme-color';meta.content='#178f85';document.head.appendChild(meta);
     if('serviceWorker' in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
   }catch(e){}
 }
@@ -2781,6 +2845,10 @@ function initPWA(){
   renderToday();renderCal();renderTasks();renderProj();renderExp();renderRcpt();renderTrips();renderExpSaved();
   renderCatOptions();renderMoney();renderPets();renderLoc();initClaims();renderHealthPage();
   startClock();scheduleCheckin();initPWA();
+  applyDisplayPrefs();
+  lastDayISO=todayISO();
+  setInterval(dayWatch,60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)dayWatch()});
   updateCloudPanel();
   if(!cfg.setupDone)showSetup();
   else if(cfg.clientId&&!cfg.offline)setCloudUI('off'); // configured but not yet connected this session
