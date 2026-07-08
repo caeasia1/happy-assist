@@ -1276,7 +1276,7 @@ async function gemini(parts){
   return t.replace(/```json|```/g,'').trim();
 }
 function toDate(s){if(!s)return'';const d=new Date(s);return isNaN(d)?'':isoLocal(d)}
-function fmtDate(s){if(!s)return'';const d=new Date(s);if(isNaN(d))return s;return d.toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'numeric'})}
+function fmtDate(s){if(!s)return'';const d=new Date(s);if(isNaN(d))return s;return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()+543}`}
 function fmtNum(n){return (Math.round((+n||0)*100)/100).toLocaleString()}
 
 // ══════════════════ TODAY ══════════════════
