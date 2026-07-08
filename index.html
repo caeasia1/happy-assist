@@ -446,7 +446,7 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
           <option>AUD</option><option>JPY</option><option>CNY</option><option>GBP</option><option>KRW</option>
         </select>
       </div>
-      <div><label>เรทเป็น THB</label><input type="number" step="0.01" id="expRate" value="1" oninput="renderExp()"></div>
+      <div><label>เรทเป็น THB</label><input type="number" inputmode="decimal" step="0.01" id="expRate" value="1" oninput="recalcExp()"></div>
     </div>
   </div>
 
@@ -1659,25 +1659,36 @@ progress เป็นตัวเลข 0-100 ประเมินจากเ�
 
 // ══════════════════ EXPENSE ══════════════════
 let expItems=[]; // {section,date,vendor,amount,airline,route}
-function addExpItem(d={}){expItems.push({section:d.section||'other',date:d.date||'',vendor:d.vendor||'',amount:d.amount||'',airline:d.airline||'',route:d.route||''});renderExp()}
+function addExpItem(d={}){expItems.push({section:d.section||'other',date:d.date||'',vendor:d.vendor||'',amount:d.amount||'',airline:d.airline||'',route:d.route||'',thb:d.thb||false});renderExp()}
+function itemTHB(it,rate){return it.thb?(+it.amount||0):(+it.amount||0)*(+rate||0)}
 function renderExp(){
   const cur=document.getElementById('expCur').value, rate=+document.getElementById('expRate').value||0;
   const el=document.getElementById('expItems');
   el.innerHTML='';
   const secLabel={airfare:'✈️ ตั๋วเครื่องบิน',hotel:'🏨 ที่พัก',meal:'🍽️ อาหาร',other:'📦 อื่นๆ'};
-  let total=0;
   expItems.forEach((it,i)=>{
-    const thb=(+it.amount||0)*rate; total+=thb;
-    el.insertAdjacentHTML('beforeend',`<div class="item"><div style="flex:0 0 auto;align-self:flex-start;background:var(--navy);color:#fff;border-radius:8px;min-width:28px;text-align:center;font-weight:800;font-size:11.5px;padding:5px 3px">${i+1}</div><div class="body"><div class="row"><select onchange="expItems[${i}].section=this.value">${Object.keys(secLabel).map(k=>`<option value="${k}" ${it.section===k?'selected':''}>${secLabel[k]}</option>`).join('')}</select><input type="date" value="${it.date}" onchange="expItems[${i}].date=this.value"></div><input class="mt8" value="${esc(it.vendor)}" placeholder="ร้าน/รายละเอียด" onchange="expItems[${i}].vendor=this.value"><div class="row mt8"><input type="number" step="0.01" value="${it.amount}" placeholder="ยอด ${cur}" oninput="expItems[${i}].amount=this.value;renderExp()"><div style="flex:1;display:flex;align-items:center;font-size:12px;color:var(--muted)">= ${fmtNum(thb)} ฿</div></div></div><div class="acts"><button class="mini del" onclick="expItems.splice(${i},1);renderExp()">🗑</button></div></div>`);
+    el.insertAdjacentHTML('beforeend',`<div class="item"><div style="flex:0 0 auto;align-self:flex-start;background:var(--navy);color:#fff;border-radius:8px;min-width:28px;text-align:center;font-weight:800;font-size:11.5px;padding:5px 3px">${i+1}</div><div class="body"><div class="row"><select onchange="expItems[${i}].section=this.value">${Object.keys(secLabel).map(k=>`<option value="${k}" ${it.section===k?'selected':''}>${secLabel[k]}</option>`).join('')}</select><input type="date" value="${it.date}" onchange="expItems[${i}].date=this.value"></div><input class="mt8" value="${esc(it.vendor)}" placeholder="ร้าน/รายละเอียด" onchange="expItems[${i}].vendor=this.value"><div class="row mt8"><input type="number" inputmode="decimal" step="0.01" value="${it.amount}" placeholder="ยอด" oninput="expItems[${i}].amount=this.value;recalcExp()"><select style="max-width:78px" onchange="expItems[${i}].thb=(this.value==='THB');recalcExp()"><option value="cur" ${it.thb?'':'selected'}>${cur}</option><option value="THB" ${it.thb?'selected':''}>บาท</option></select></div><div style="text-align:right;font-size:12px;color:var(--muted);margin-top:4px">= <b id="exthb${i}">${fmtNum(itemTHB(it,rate))}</b> ฿</div></div><div class="acts"><button class="mini del" onclick="expItems.splice(${i},1);renderExp()">🗑</button></div></div>`);
   });
   if(!expItems.length)el.innerHTML='<div class="empty">ยังไม่มีรายการ — สแกนบิลหรือเพิ่มเอง</div>';
+  recalcExp();
+}
+// อัปเดตยอด THB/รวม โดยไม่สร้าง input ใหม่ (แก้บั๊กพิมพ์แล้วเด้ง/พิมพ์ทศนิยมไม่ได้)
+function recalcExp(){
+  const rate=+document.getElementById('expRate').value||0;
+  let total=0;
+  expItems.forEach((it,i)=>{
+    const thb=itemTHB(it,rate);total+=thb;
+    const el=document.getElementById('exthb'+i);if(el)el.textContent=fmtNum(thb);
+  });
   document.getElementById('expTotal').textContent=fmtNum(total);
 }
 function travelOcrPrompt(){
   const cur=document.getElementById('expCur').value;
   return `Analyze all receipt images. Extract each expense as JSON array (no markdown):
-[{"section":"airfare|hotel|meal|other","date":"YYYY-MM-DD","vendor":"name","amount":number,"airline":"if airfare","route":"CITY - CITY if airfare"}]
-Use the ${cur} amount. airfare=flights, hotel=lodging, meal=food/restaurant, other=taxi/grab/visa/misc.`;
+[{"section":"airfare|hotel|meal|other","date":"YYYY-MM-DD","vendor":"name","amount":number,"currency":"THB or ${cur} or other ISO code","airline":"if airfare","route":"CITY - CITY if airfare"}]
+For amount, read the total charged on the receipt in its own currency.
+currency: detect the actual currency printed on the receipt. If it shows ฿, บาท, THB, or is a Thai receipt → "THB". Otherwise the foreign currency (default ${cur}).
+airfare=flights, hotel=lodging, meal=food/restaurant, other=taxi/grab/visa/misc.`;
 }
 async function ocrTravel(mediaParts,st,nfiles){
   const CH=8; let total=0;
@@ -1685,7 +1696,7 @@ async function ocrTravel(mediaParts,st,nfiles){
     st.className='status load';
     st.innerHTML=`<span class="spin"></span>กำลังอ่านบิล ${i+1}–${Math.min(i+CH,mediaParts.length)} จาก ${mediaParts.length}...`;
     const items=JSON.parse(await gemini([{text:travelOcrPrompt()},...mediaParts.slice(i,i+CH)]));
-    items.forEach(it=>addExpItem({section:it.section,date:toDate(it.date),vendor:it.vendor||it.airline||'',amount:it.amount,airline:it.airline,route:it.route}));
+    items.forEach(it=>addExpItem({section:it.section,date:toDate(it.date),vendor:it.vendor||it.airline||'',amount:it.amount,airline:it.airline,route:it.route,thb:/^(thb|บาท|฿)/i.test((it.currency||'').trim())}));
     total+=items.length;
   }
   st.className='status ok';st.textContent=`✓ อ่านได้ ${total} รายการจาก ${nfiles} ไฟล์ ตรวจสอบก่อนออก PDF`;
@@ -1701,7 +1712,7 @@ async function scanExpense(files){
 }
 function clearExp(){if(confirm('ล้างรายการทั้งหมด?')){expItems=[];renderExp()}}
 function saveExpense(){
-  const rec={id:uid(),type:'travel',doc:v('expDoc'),date:v('expDate'),name:v('expName'),purpose:v('expPurpose'),dest:v('expDest'),cur:v('expCur'),rate:+v('expRate')||1,items:JSON.parse(JSON.stringify(expItems)),total:expItems.reduce((s,i)=>s+(+i.amount||0)*(+v('expRate')||1),0),savedAt:todayISO()};
+  const rec={id:uid(),type:'travel',doc:v('expDoc'),date:v('expDate'),name:v('expName'),purpose:v('expPurpose'),dest:v('expDest'),cur:v('expCur'),rate:+v('expRate')||1,items:JSON.parse(JSON.stringify(expItems)),total:expItems.reduce((s,i)=>s+itemTHB(i,+v('expRate')||1),0),savedAt:todayISO()};
   savedExp.unshift(rec);save();renderExpSaved();toast('บันทึกใบเบิกแล้ว')
 }
 function renderExpSaved(){
@@ -1759,8 +1770,8 @@ function expensePDF(){
     const cw=[10,22,78,35,35];const hd=['No.','Date','Vendor / Description',`Amount (${cur})`,'Amount (THB)'];
     let x=ML;hd.forEach((h,i)=>{cell(h,x,y,cw[i],6,221,i>=3?'right':i===0?'center':'left','bold');x+=cw[i]});y+=6;
     let sub=0;
-    rows.forEach((r,ri)=>{if(y>282){doc.addPage();y=14}const thb=(+r.amount||0)*rate;sub+=thb;x=ML;const bg=ri%2?245:255;
-      [String(r.no),fmtEn(r.date),r.vendor||r.airline||'',fmtNum(r.amount)+' '+cur,fmtNum(thb)].forEach((c,i)=>{cell(c,x,y,cw[i],6,bg,i>=3?'right':i===0?'center':'left');x+=cw[i]});y+=6});
+    rows.forEach((r,ri)=>{if(y>282){doc.addPage();y=14}const thb=itemTHB(r,rate);sub+=thb;x=ML;const bg=ri%2?245:255;
+      [String(r.no),fmtEn(r.date),r.vendor||r.airline||'',fmtNum(r.amount)+' '+(r.thb?'THB':cur),fmtNum(thb)].forEach((c,i)=>{cell(c,x,y,cw[i],6,bg,i>=3?'right':i===0?'center':'left');x+=cw[i]});y+=6});
     x=ML;const sw=cw[0]+cw[1]+cw[2]+cw[3];cell('Subtotal (THB)',ML,y,sw,6,221,'right','bold');cell(fmtNum(sub),ML+sw,y,cw[4],6,221,'right','bold');y+=9;grand+=sub;
   });
   if(y>255){doc.addPage();y=14}
