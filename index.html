@@ -701,6 +701,8 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
       <div><label>น้ำตาล (g) — ถ้ามี</label><input type="number" step="0.1" id="mfSugar" placeholder="(เว้นว่างได้)"></div>
       <div><label>ประเภท</label><select id="mfType"><option value="">อาหาร</option><option value="1">เครื่องดื่ม</option></select></div>
     </div>
+    <button class="btn purple block mt8" onclick="aiEstimateFood()">🤖 ให้ AI คำนวณแคล + น้ำตาล (แค่พิมพ์ชื่ออาหาร)</button>
+    <div class="status" id="mfStatus"></div>
     <button class="btn green block mt8" onclick="saveManualFood()">＋ เพิ่มลงรายการวันนี้</button>
   </div>
 
@@ -750,8 +752,9 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
       <div class="field mt8"><label>โดเมนบริษัท (นับเป็นเมลภายใน)</label><input id="mcCompany" placeholder="caeasia.com"></div>
       <div class="field"><label>โดเมนลูกค้า (คั่นด้วย , )</label><input id="mcCust" placeholder="lenzing.com, ttcl.com, pttep.com, thainippon.com"></div>
       <div class="field"><label>ย้อนหลัง (วัน)</label><input type="number" id="mcDays" placeholder="30"></div>
+      <div class="field"><label>🚫 เมลที่ไม่เอา — โดเมน/คำ (คั่นด้วย , )</label><input id="mcBlock" placeholder="noreply, newsletter, facebookmail.com, promotions"></div>
       <button class="btn sm" onclick="saveMailCfg()">บันทึกการตั้งค่า</button>
-      <div class="hint mt8">กฎ: เมลภายใน @บริษัท จะสรุปเฉพาะที่<b>มีลูกค้าเกี่ยวข้อง</b> (ฝ่ายขาย) · เมลจากลูกค้าสรุปบริษัท+เรื่อง · เมลที่<b>ใช้ชื่อเหมือนคนในบริษัทแต่โดเมนไม่ใช่</b>จะถูกเตือนว่าน่าสงสัย</div>
+      <div class="hint mt8">กฎ: เมลภายใน @บริษัท จะสรุปเฉพาะที่<b>มีลูกค้าเกี่ยวข้อง</b> (ฝ่ายขาย) · เมลจากลูกค้าสรุปบริษัท+เรื่อง · เมลที่<b>ใช้ชื่อเหมือนคนในบริษัทแต่โดเมนไม่ใช่</b>จะถูกเตือนว่าน่าสงสัย · <b>เมลที่ไม่เอา</b>: ถ้าผู้ส่ง/หัวข้อ/โดเมน มีคำที่ระบุ จะถูกตัดทิ้งทันที (ไม่ส่งให้ AI)</div>
     </details>
   </div>
 
@@ -2672,7 +2675,24 @@ function saveFood(){
     note:document.getElementById('fNote').value.trim()});
   save();renderHealthPage();renderHomeHealth();closeSheet();toast('บันทึกอาหารแล้ว 🍽️');
 }
+async function aiEstimateFood(){
+  const name=document.getElementById('mfName').value.trim();
+  const st=document.getElementById('mfStatus');
+  if(!name){toast('พิมพ์ชื่ออาหารก่อน');return}
+  if(!getKey())return;
+  st.className='status load';st.innerHTML='<span class="spin"></span>AI กำลังประเมินแคล + น้ำตาล...';
+  try{
+    const d=JSON.parse(await gemini([{text:`ประมาณคุณค่าทางโภชนาการของ "${name}" (1 หน่วยเสิร์ฟปกติแบบไทย) ตอบ JSON เท่านั้น (ไม่มี markdown):
+{"calories":ตัวเลข kcal,"sugar_g":ตัวเลขกรัมน้ำตาล,"is_drink":true/false}
+ประมาณคร่าวๆ ไม่ต้องแม่นยำ 100%`}]));
+    document.getElementById('mfCal').value=Math.round(+d.calories||0);
+    document.getElementById('mfSugar').value=(d.sugar_g==null||d.sugar_g==='')?'':d.sugar_g;
+    document.getElementById('mfType').value=d.is_drink?'1':'';
+    st.className='status ok';st.textContent=`✓ ประเมิน: ${Math.round(+d.calories||0)} kcal${d.sugar_g!=null?' · น้ำตาล '+d.sugar_g+' g':''} — แก้ได้ก่อนบันทึก`;
+  }catch(e){st.className='status err';st.textContent='✗ '+e.message}
+}
 function saveManualFood(){
+  const st=document.getElementById('mfStatus');if(st)st.textContent='';
   const name=document.getElementById('mfName').value.trim();
   const cal=+document.getElementById('mfCal').value||0;
   if(!name)return toast('กรุณาใส่ชื่ออาหาร');
@@ -2828,13 +2848,14 @@ function renderHomeHealth(){
 }
 
 // ══════════════════ EMAIL READER ══════════════════
-let mailCfg=DB.get('mailCfg',{company:'caeasia.com',customers:['lenzing.com','ttcl.com','pttep.com','thainippon.com'],days:30});
+let mailCfg=DB.get('mailCfg',{company:'caeasia.com',customers:['lenzing.com','ttcl.com','pttep.com','thainippon.com'],days:30,block:['noreply','newsletter','no-reply','facebookmail.com','linkedin.com']});
 let mailResults=null; // ผลสแกนล่าสุด (ไม่เก็บ raw email — เก็บแค่สรุปในหน่วยความจำ session)
 function saveMailCfg(){
   mailCfg={
     company:(document.getElementById('mcCompany').value.trim()||'caeasia.com').toLowerCase().replace(/^@/,''),
     customers:document.getElementById('mcCust').value.split(',').map(s=>s.trim().toLowerCase().replace(/^@/,'')).filter(Boolean),
-    days:+document.getElementById('mcDays').value||30
+    days:+document.getElementById('mcDays').value||30,
+    block:document.getElementById('mcBlock').value.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean)
   };
   DB.set('mailCfg',mailCfg);toast('บันทึกการตั้งค่าเมลแล้ว');
 }
@@ -2863,7 +2884,10 @@ async function scanMail(){
       st.innerHTML=`<span class="spin"></span>อ่านหัวเมล ${i+1}/${msgs.length}...`;
       const m=await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgs[i].id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`,H)).json();
       const h=n=>(m.payload?.headers||[]).find(x=>x.name===n)?.value||'';
-      const from=h('From'), dom=emailDomain(from), name=emailName(from);
+      const from=h('From'), dom=emailDomain(from), name=emailName(from), subj=h('Subject');
+      // rule เมลที่ไม่เอา: ถ้าผู้ส่ง/หัวข้อ/โดเมน ตรงคำที่บล็อก → ตัดทิ้งเลย
+      const blob=(from+' '+subj+' '+dom).toLowerCase();
+      if((mailCfg.block||[]).some(b=>b&&blob.includes(b)))continue;
       const recips=(h('To')+' '+h('Cc')).toLowerCase();
       const custInvolved=mailCfg.customers.filter(c=>dom===c||recips.includes(c));
       const internal=dom===mailCfg.company;
@@ -2878,7 +2902,7 @@ async function scanMail(){
       else if(internal)bucket=null; // เมลภายในที่ไม่เกี่ยวลูกค้า → ข้าม (ไม่ใช่ฝ่ายขาย)
       else bucket='other'; // เมลนอกอื่นๆ ให้ AI ช่วยดูว่าสำคัญ/สแปม
       if(!bucket)continue;
-      cands.push({id:msgs[i].id,from,name,dom,subject:h('Subject'),date:h('Date'),snippet:m.snippet||'',
+      cands.push({id:msgs[i].id,from,name,dom,subject:subj,date:h('Date'),snippet:m.snippet||'',
         bucket,custInvolved:[...new Set(custInvolved)]});
     }
     if(!cands.length){st.className='status ok';st.textContent='✓ ไม่มีเมลที่เข้าเกณฑ์ (ฝ่ายขาย/ลูกค้า) ใน '+mailCfg.days+' วัน';return}
@@ -2932,6 +2956,7 @@ function mailCardHTML(title,icon,items,render){
 function renderMail(){
   const c=mailCfg;
   document.getElementById('mcCompany').value=c.company;
+  document.getElementById('mcBlock').value=(c.block||[]).join(', ');
   document.getElementById('mcCust').value=c.customers.join(', ');
   document.getElementById('mcDays').value=c.days;
   const R=mailResults;
