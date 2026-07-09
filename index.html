@@ -766,6 +766,39 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
   <div id="mailEmpty"></div>
 </section>
 
+<!-- ══ PAGE: WORK (สั่งงานพนักงาน — เชื่อม Happy Tasks) ══ -->
+<section class="page" id="page-work">
+  <div class="page-title">สั่งงานพนักงาน 📌</div>
+  <div class="page-desc">มอบหมายงาน · ดูสถานะ · งานค้าง/เกินกำหนด — เชื่อมกับแอป Happy Tasks ของพนักงาน</div>
+
+  <div class="card" id="wkSetup" style="display:none">
+    <b>🔗 เชื่อมต่อครั้งแรก (ทำครั้งเดียว)</b>
+    <div class="hint mt8">1) แชท Telegram กับบอท Happy Tasks กด /start แล้วคัดลอก "ลิงก์ส่วนตัว" มาวาง &nbsp;2) วางลิงก์ API (/exec) ที่ได้ตอนติดตั้งระบบ</div>
+    <div class="field mt8"><label>ลิงก์ส่วนตัวจากบอท</label><input id="wkCfgLink" placeholder="https://happy-tasks.pages.dev/?uid=B01&key=..."></div>
+    <div class="field"><label>ลิงก์ API (Apps Script /exec)</label><input id="wkCfgApi" placeholder="https://script.google.com/macros/s/.../exec"></div>
+    <button class="btn green block" onclick="saveWorkCfg()">บันทึกการเชื่อมต่อ</button>
+    <div class="status" id="wkCfgStatus"></div>
+  </div>
+
+  <div class="card" id="wkCreate" style="display:none">
+    <b>➕ สั่งงานใหม่</b>
+    <div class="field mt8"><label>ชื่องาน *</label><input id="wkTitle" placeholder="เช่น เตรียมห้องประชุมบ่ายนี้"></div>
+    <div class="field"><label>รายละเอียด</label><textarea id="wkDetail" rows="2" placeholder="จุดไหน ทำอะไร เสร็จแล้วให้เห็นอะไร"></textarea></div>
+    <div class="field"><label>มอบให้</label><select id="wkAssignee"><option value="">🔔 งานกลาง — ใครว่างกดรับ</option></select></div>
+    <div class="field"><label>กำหนดเสร็จ (เว้นว่างได้)</label><input type="datetime-local" id="wkDeadline"></div>
+    <button class="btn accent block" style="padding:13px" onclick="createWork()">📨 สั่งงาน</button>
+    <div class="status" id="wkStatus"></div>
+  </div>
+
+  <div class="card" id="wkSummary" style="display:none">
+    <b>📊 สรุปวันนี้ <button class="btn sm" style="float:right" onclick="renderWork(true)">↻ รีเฟรช</button></b>
+    <div id="wkStats" class="mt8"></div>
+  </div>
+  <div id="wkAlert"></div>
+  <div id="wkActive"></div>
+  <div id="wkDoneList"></div>
+</section>
+
 <!-- ══ NAV (mobile bottom) ══ -->
 <nav class="nav" id="nav">
   <button class="on" data-p="today" onclick="go(this)"><span class="ic">🏠</span>หน้าหลัก</button>
@@ -788,6 +821,7 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
   <button data-p="proj" onclick="go(this)">📁 โปรเจค</button>
   <button data-p="loc" onclick="go(this)">📍 บันทึกที่อยู่</button>
   <button data-p="mail" onclick="go(this)">📧 อ่านเมล & นัดหมาย</button>
+  <button data-p="work" onclick="go(this)">📌 สั่งงานพนักงาน</button>
 </aside>
 <img src="happy-hero.png" class="happy-float" alt="" onerror="this.style.display='none'">
 
@@ -801,6 +835,7 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
       <button onclick="closeSheet();goto('proj')"><span class="ic">📁</span>โปรเจค</button>
       <button onclick="closeSheet();goto('loc')"><span class="ic">📍</span>บันทึกที่อยู่</button>
       <button onclick="closeSheet();goto('mail')"><span class="ic">📧</span>อ่านเมล</button>
+      <button onclick="closeSheet();goto('work')"><span class="ic">📌</span>สั่งงาน</button>
     </div>
   </div>
 
@@ -1255,6 +1290,7 @@ function goto(p){
   if(p==='proj')renderProj();
   if(p==='health')renderHealthPage();
   if(p==='mail')renderMail();
+  if(p==='work')renderWork();
 }
 
 // ══════════════════ SHEETS ══════════════════
@@ -1270,6 +1306,132 @@ function saveKey(){const k=document.getElementById('apiKey').value.trim();if(k){
 function saveOwner(){const n=document.getElementById('ownerName').value.trim();localStorage.setItem('owner',n);document.getElementById('topSub').textContent=n?('ผู้ช่วยของ '+n):'ผู้ช่วยส่วนตัวของคุณ';document.getElementById('expName').value=n;closeSheet();toast('บันทึกโปรไฟล์แล้ว')}
 function getKey(){const k=localStorage.getItem('gemini_key');if(!k){toast('กรุณาใส่ Gemini API Key ที่ ⚙️ ก่อน');openSheet('apiSheet')}return k}
 function toast(m){const t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:86px;left:50%;transform:translateX(-50%);background:#1c2530;color:#fff;padding:9px 16px;border-radius:22px;font-size:12.5px;z-index:200;box-shadow:0 4px 16px rgba(0,0,0,.3)';document.body.appendChild(t);setTimeout(()=>t.remove(),2200)}
+
+// ══════════════════ WORK (สั่งงานพนักงาน — Happy Tasks) ══════════════════
+function workCfg(){try{return JSON.parse(localStorage.getItem('workCfg'))||null}catch(e){return null}}
+function saveWorkCfg(){
+  const st=document.getElementById('wkCfgStatus');
+  try{
+    const link=document.getElementById('wkCfgLink').value.trim();
+    const api=document.getElementById('wkCfgApi').value.trim();
+    const u=new URL(link); const uid=u.searchParams.get('uid'), key=u.searchParams.get('key');
+    if(!uid||!key)throw new Error('ลิงก์ส่วนตัวไม่ถูกต้อง — ต้องมี uid และ key');
+    if(api.indexOf('http')!==0)throw new Error('ลิงก์ API ไม่ถูกต้อง');
+    localStorage.setItem('workCfg',JSON.stringify({api:api.split('?')[0],uid:uid,key:key}));
+    st.className='status ok';st.textContent='✓ เชื่อมต่อแล้ว';renderWork(true);
+  }catch(e){st.className='status err';st.textContent='✗ '+e.message}
+}
+let WK_TASKS=[],WK_EMPS=[];
+async function workGet(api){const c=workCfg();const r=await fetch(c.api+'?api='+api+'&uid='+encodeURIComponent(c.uid)+'&key='+encodeURIComponent(c.key));return r.json()}
+async function workPost(body){const c=workCfg();body.uid=c.uid;body.key=c.key;
+  const r=await fetch(c.api,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});return r.json()}
+function wkToday(){const d=new Date();return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear()}
+function wkEsc(x){const d=document.createElement('div');d.textContent=x||'';return d.innerHTML}
+function wkName(t){return t.accepted_by_name||t.assignee_name||''}
+
+async function renderWork(manual){
+  const has=!!workCfg();
+  document.getElementById('wkSetup').style.display=has?'none':'block';
+  document.getElementById('wkCreate').style.display=has?'block':'none';
+  document.getElementById('wkSummary').style.display=has?'block':'none';
+  if(!has)return;
+  try{
+    const [td,te]=await Promise.all([workGet('tasks'),workGet('employees')]);
+    if(!td.ok)throw new Error(td.message);
+    WK_TASKS=td.tasks; WK_EMPS=te.ok?te.employees:[];
+    const sel=document.getElementById('wkAssignee');
+    const cur=sel.value;
+    sel.innerHTML='<option value="">🔔 งานกลาง — ใครว่างกดรับ</option>'+WK_EMPS.filter(e=>e.role!=='boss').map(e=>'<option value="'+wkEsc(e.emp_id)+'">'+wkEsc(e.name)+'</option>').join('');
+    sel.value=cur;
+    wkRenderStats();wkRenderAlert();wkRenderActive();wkRenderDone();
+    if(manual)toast('อัปเดตข้อมูลงานแล้ว');
+  }catch(e){if(manual)toast('เชื่อมต่อไม่ได้: '+e.message)}
+}
+function wkRenderStats(){
+  const today=wkToday();
+  const t=WK_TASKS.filter(x=>(x.created_at||'').indexOf(today)===0);
+  const done=t.filter(x=>x.status==='done').length, doing=t.filter(x=>x.status==='accepted').length,
+        wait=t.filter(x=>x.status==='waiting').length, rej=t.filter(x=>x.status==='rejected').length;
+  document.getElementById('wkStats').innerHTML=
+    '<span class="chip">📋 สั่งวันนี้ '+t.length+'</span> <span class="chip">⏳ รอรับ '+wait+'</span> '+
+    '<span class="chip">🔧 กำลังทำ '+doing+'</span> <span class="chip">✅ เสร็จ '+done+'</span>'+
+    (rej?' <span class="chip" style="background:#fdeaea;color:#c0392b">⛔ ถูกปฏิเสธ '+rej+'</span>':'');
+}
+function wkCardHead(t,extra){
+  return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b>'+wkEsc(t.title)+'</b><span class="hint" style="white-space:nowrap">'+wkEsc(t.task_id)+'</span></div>'+
+    (t.detail?'<div class="hint">'+wkEsc(t.detail)+'</div>':'')+
+    '<div class="hint">สั่งเมื่อ '+wkEsc(t.created_at)+(t.deadline?' · ⏰ กำหนด '+wkEsc(t.deadline):'')+(extra||'')+'</div>';
+}
+function wkRenderAlert(){
+  const rej=WK_TASKS.filter(t=>t.status==='rejected');
+  const over=WK_TASKS.filter(t=>t.overdue&&t.status!=='rejected');
+  const stale=WK_TASKS.filter(t=>t.type==='open'&&t.status==='waiting'&&t.overdue_notified);
+  let h='';
+  if(rej.length||over.length||stale.length){
+    h='<div class="card"><b>🚨 ต้องจัดการ</b>';
+    rej.forEach(t=>{
+      h+='<div class="mt8" style="border-top:1px solid var(--line);padding-top:8px">'+wkCardHead(t,
+        ' · <b style="color:#c0392b">ถูกปฏิเสธ: '+wkEsc(t.reject_reason)+'</b> ('+wkEsc(t.assignee_name)+')')+
+        '<div style="display:flex;gap:6px;margin-top:6px"><select id="wkRe_'+wkEsc(t.task_id)+'" style="flex:1">'+
+        '<option value="">🔔 ปล่อยเป็นงานกลาง</option>'+
+        WK_EMPS.filter(e=>e.role!=='boss'&&e.emp_id!==t.assignee).map(e=>'<option value="'+wkEsc(e.emp_id)+'">'+wkEsc(e.name)+'</option>').join('')+
+        '</select><button class="btn sm accent" onclick="reassignWork(\''+wkEsc(t.task_id)+'\')">มอบใหม่</button></div></div>';
+    });
+    over.forEach(t=>{h+='<div class="mt8" style="border-top:1px solid var(--line);padding-top:8px">'+wkCardHead(t,' · <b style="color:#c0392b">⏰ เกินกำหนด</b> · '+wkEsc(wkName(t)||'ยังไม่มีคนรับ'))+'</div>'});
+    stale.forEach(t=>{h+='<div class="mt8" style="border-top:1px solid var(--line);padding-top:8px">'+wkCardHead(t,' · <b style="color:#b56a00">🔔 งานกลางยังไม่มีคนรับเกิน 30 นาที</b>')+'</div>'});
+    h+='</div>';
+  }
+  document.getElementById('wkAlert').innerHTML=h;
+}
+function wkRenderActive(){
+  const act=WK_TASKS.filter(t=>t.status==='waiting'||t.status==='accepted');
+  let h='<div class="card"><b>👥 ใครทำอะไรอยู่ ('+act.length+')</b>';
+  if(!act.length)h+='<div class="hint mt8">ไม่มีงานค้างอยู่ 🎈</div>';
+  act.forEach(t=>{
+    const who=t.status==='accepted'?('🔧 '+wkEsc(t.accepted_by_name)+' กำลังทำ (รับเมื่อ '+wkEsc(t.accepted_at)+')')
+      :(t.type==='open'?'🔔 งานกลาง — รอคนกดรับ':'⏳ รอ '+wkEsc(t.assignee_name)+' กดรับ');
+    h+='<div class="mt8" style="border-top:1px solid var(--line);padding-top:8px">'+wkCardHead(t,' · '+who)+'</div>';
+  });
+  document.getElementById('wkActive').innerHTML=h+'</div>';
+}
+function wkRenderDone(){
+  const today=wkToday();
+  const done=WK_TASKS.filter(t=>t.status==='done');
+  const dToday=done.filter(t=>(t.done_at||'').indexOf(today)===0);
+  const list=dToday.length?dToday:done.slice(0,5);
+  let h='<div class="card"><b>✅ งานที่เสร็จ'+(dToday.length?'วันนี้ ('+dToday.length+')':' ล่าสุด')+'</b>';
+  if(!list.length)h+='<div class="hint mt8">ยังไม่มีงานเสร็จ</div>';
+  list.forEach(t=>{
+    h+='<div class="mt8" style="border-top:1px solid var(--line);padding-top:8px">'+wkCardHead(t,' · เสร็จ '+wkEsc(t.done_at)+' โดย '+wkEsc(t.accepted_by_name))+
+      (t.proof_url?'<a href="'+wkEsc(t.proof_url)+'" target="_blank" class="hint" style="color:var(--navy)">📷 ดูรูปหลักฐาน</a>':'')+'</div>';
+  });
+  document.getElementById('wkDoneList').innerHTML=h+'</div>';
+}
+async function createWork(){
+  const st=document.getElementById('wkStatus');
+  const title=document.getElementById('wkTitle').value.trim();
+  if(!title){st.className='status err';st.textContent='✗ กรุณาใส่ชื่องาน';return}
+  const dl=document.getElementById('wkDeadline').value;
+  let deadline='';
+  if(dl){const d=new Date(dl);deadline=String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+  const assignee=document.getElementById('wkAssignee').value;
+  st.className='status';st.textContent='กำลังส่ง...';
+  try{
+    const r=await workPost({action:'create',type:assignee?'assigned':'open',assignee:assignee,
+      title:title,detail:document.getElementById('wkDetail').value.trim(),deadline:deadline});
+    if(!r.ok)throw new Error(r.message);
+    st.className='status ok';st.textContent='✓ '+r.message+' — แจ้งเตือนพนักงานแล้ว';
+    document.getElementById('wkTitle').value='';document.getElementById('wkDetail').value='';document.getElementById('wkDeadline').value='';
+    renderWork();
+  }catch(e){st.className='status err';st.textContent='✗ '+e.message}
+}
+async function reassignWork(taskId){
+  try{
+    const sel=document.getElementById('wkRe_'+taskId);
+    const r=await workPost({action:'reassign',taskId:taskId,assignee:sel?sel.value:''});
+    toast(r.message);renderWork();
+  }catch(e){toast('ส่งไม่สำเร็จ: '+e.message)}
+}
 
 // ══════════════════ GEMINI OCR ══════════════════
 async function fileToPart(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res({mime:f.type.startsWith('image')?f.type:'image/jpeg',b64:e.target.result.split(',')[1],dataUrl:e.target.result});r.onerror=rej;r.readAsDataURL(f)})}
