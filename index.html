@@ -1321,7 +1321,7 @@ function saveWorkCfg(){
     st.className='status ok';st.textContent='✓ เชื่อมต่อแล้ว';renderWork(true);
   }catch(e){st.className='status err';st.textContent='✗ '+e.message}
 }
-let WK_TASKS=[],WK_EMPS=[];
+let WK_TASKS=[],WK_EMPS=[],WK_ME=null;
 async function workGet(api){const c=workCfg();const r=await fetch(c.api+'?api='+api+'&uid='+encodeURIComponent(c.uid)+'&key='+encodeURIComponent(c.key));return r.json()}
 async function workPost(body){const c=workCfg();body.uid=c.uid;body.key=c.key;
   const r=await fetch(c.api,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});return r.json()}
@@ -1338,10 +1338,10 @@ async function renderWork(manual){
   try{
     const [td,te]=await Promise.all([workGet('tasks'),workGet('employees')]);
     if(!td.ok)throw new Error(td.message);
-    WK_TASKS=td.tasks; WK_EMPS=te.ok?te.employees:[];
+    WK_TASKS=td.tasks; WK_EMPS=te.ok?te.employees:[]; WK_ME=td.me;
     const sel=document.getElementById('wkAssignee');
     const cur=sel.value;
-    sel.innerHTML='<option value="">🔔 งานกลาง — ใครว่างกดรับ</option>'+WK_EMPS.filter(e=>e.role!=='boss').map(e=>'<option value="'+wkEsc(e.emp_id)+'">'+wkEsc(e.name)+'</option>').join('');
+    sel.innerHTML='<option value="">🔔 งานกลาง — ใครว่างกดรับ</option>'+(WK_ME?'<option value="'+wkEsc(WK_ME.emp_id)+'">📝 งานส่วนตัวของฉัน (เห็นคนเดียว)</option>':'')+WK_EMPS.filter(e=>e.role!=='boss').map(e=>'<option value="'+wkEsc(e.emp_id)+'">'+wkEsc(e.name)+'</option>').join('');
     sel.value=cur;
     wkRenderStats();wkRenderAlert();wkRenderActive();wkRenderDone();
     if(manual)toast('อัปเดตข้อมูลงานแล้ว');
@@ -1358,7 +1358,7 @@ function wkRenderStats(){
     (rej?' <span class="chip" style="background:#fdeaea;color:#c0392b">⛔ ถูกปฏิเสธ '+rej+'</span>':'');
 }
 function wkCardHead(t,extra){
-  return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b>'+wkEsc(t.title)+'</b><span class="hint" style="white-space:nowrap">'+wkEsc(t.task_id)+'</span></div>'+
+  return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b>'+(t.personal?'🔒 ':'')+wkEsc(t.title)+'</b><span class="hint" style="white-space:nowrap">'+wkEsc(t.task_id)+'</span></div>'+
     (t.detail?'<div class="hint">'+wkEsc(t.detail)+'</div>':'')+
     '<div class="hint">สั่งเมื่อ '+wkEsc(t.created_at)+(t.deadline?' · ⏰ กำหนด '+wkEsc(t.deadline):'')+(extra||'')+'</div>';
 }
