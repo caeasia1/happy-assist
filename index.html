@@ -437,7 +437,7 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
       <div class="status" id="expStatus"></div>
     </div>
     <div class="grid2">
-      <div><label>เลขที่เอกสาร</label><input id="expDoc" value="ACC-MGM-2026001"></div>
+      <div><label>เลขที่เอกสาร</label><input id="expDoc" placeholder="รันอัตโนมัติ"></div>
       <div><label>วันที่</label><input type="date" id="expDate"></div>
       <div><label>ชื่อผู้เบิก</label><input id="expName" placeholder="ชื่อ-สกุล"></div>
       <div><label>แผนก</label><input id="expDept" value="Management"></div>
@@ -1904,7 +1904,9 @@ async function scanExpense(files){
 function clearExp(){if(confirm('ล้างรายการทั้งหมด?')){expItems=[];expReceiptImgs=[];renderExp()}}
 function saveExpense(){
   const rec={id:uid(),type:'travel',doc:v('expDoc'),date:v('expDate'),name:v('expName'),purpose:v('expPurpose'),dest:v('expDest'),cur:v('expCur'),rate:+v('expRate')||1,items:JSON.parse(JSON.stringify(expItems)),total:expItems.reduce((s,i)=>s+itemTHB(i,+v('expRate')||1),0),savedAt:todayISO()};
-  savedExp.unshift(rec);save();renderExpSaved();toast('บันทึกใบเบิกแล้ว')
+  savedExp.unshift(rec);save();renderExpSaved();
+  document.getElementById('expDoc').value=nextExpDocNo();
+  toast('บันทึกใบเบิกแล้ว')
 }
 function renderExpSaved(){
   const el=document.getElementById('expSaved');
@@ -2018,6 +2020,7 @@ function setClaimType(b){
   const g=b.dataset.c==='general';
   document.getElementById('claimGeneral').style.display=g?'block':'none';
   document.getElementById('claimTravel').style.display=g?'none':'block';
+  if(!g){const d=document.getElementById('expDoc');if(!d.value.trim())d.value=nextExpDocNo();}
 }
 function onGReq(){document.getElementById('gReqOtherWrap').style.display=document.getElementById('gReq').value==='_other'?'block':'none'}
 function gReqName(){const s=document.getElementById('gReq').value;return s==='_other'?document.getElementById('gReqOther').value.trim():s}
@@ -2025,6 +2028,12 @@ function nextDocNo(){
   const y=new Date().getFullYear();
   const n=savedExp.filter(r=>r.type==='general'&&(r.doc||'').includes(String(y))).length+1;
   return `ACC-MGM-${y}${String(n).padStart(3,'0')}`;
+}
+// เลขที่เอกสารใบเบิกเดินทาง — รันอัตโนมัติ + จำ (นับจากใบเดินทางที่บันทึกไว้ในปีนั้น)
+function nextExpDocNo(){
+  const y=new Date().getFullYear();
+  const n=savedExp.filter(r=>r.type==='travel'&&(r.doc||'').includes('ACC-TRV-'+y)).length+1;
+  return `ACC-TRV-${y}${String(n).padStart(3,'0')}`;
 }
 let gItems=[];
 let gReceiptImgs=[]; // รูปบิลที่สแกน (แนบใน PDF)
