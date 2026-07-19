@@ -1439,7 +1439,24 @@ async function reassignWork(taskId){
 }
 
 // ══════════════════ GEMINI OCR ══════════════════
-async function fileToPart(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res({mime:f.type.startsWith('image')?f.type:'image/jpeg',b64:e.target.result.split(',')[1],dataUrl:e.target.result});r.onerror=rej;r.readAsDataURL(f)})}
+function readDataUrl(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=rej;r.readAsDataURL(f)})}
+// แปลงไฟล์เป็น part สำหรับ Gemini — รูปย่อ+เข้ารหัสเป็น JPEG มาตรฐาน (กัน HEIC/รูปใหญ่/EXIF ที่ Gemini อ่านไม่ได้), PDF ส่งเป็น application/pdf
+async function fileToPart(f){
+  const isPdf=(f.type==='application/pdf')||/\.pdf$/i.test(f.name||'');
+  const dataUrl=await readDataUrl(f);
+  if(isPdf){const b64=dataUrl.split(',')[1];return {mime:'application/pdf',b64,dataUrl:'data:application/pdf;base64,'+b64}}
+  try{
+    const img=await new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('decode'));im.src=dataUrl});
+    const MAX=1600, sc=Math.min(1,MAX/Math.max(img.width,img.height));
+    const w=Math.max(1,Math.round(img.width*sc)), h=Math.max(1,Math.round(img.height*sc));
+    const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+    const cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,w,h);cx.drawImage(img,0,0,w,h);
+    const jpg=cv.toDataURL('image/jpeg',0.85);
+    return {mime:'image/jpeg',b64:jpg.split(',')[1],dataUrl:jpg};
+  }catch(e){ // เบราว์เซอร์ decode ไม่ได้ (เช่น HEIC บน Android) → ส่งไบต์เดิมไปลองก่อน
+    return {mime:f.type&&f.type.startsWith('image')?f.type:'image/jpeg',b64:dataUrl.split(',')[1],dataUrl};
+  }
+}
 async function gemini(parts){
   const key=getKey();if(!key)throw new Error('no key');
   const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
