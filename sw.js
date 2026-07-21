@@ -1,5 +1,5 @@
 // Happy Assist — service worker (network-first for HTML, cache fallback for offline)
-const CACHE = 'happy-assist-v4';
+const CACHE = 'happy-assist-v5';
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil((async () => {
   // ลบ cache เก่าทุกเวอร์ชันที่ไม่ใช่ปัจจุบัน → บังคับให้ได้ไฟล์ใหม่หลังอัปเดต

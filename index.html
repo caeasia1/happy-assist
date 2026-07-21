@@ -1904,7 +1904,7 @@ async function scanExpense(files){
 function clearExp(){if(confirm('ล้างรายการทั้งหมด?')){expItems=[];expReceiptImgs=[];renderExp()}}
 function saveExpense(){
   const rec={id:uid(),type:'travel',doc:v('expDoc'),date:v('expDate'),name:v('expName'),purpose:v('expPurpose'),dest:v('expDest'),cur:v('expCur'),rate:+v('expRate')||1,items:JSON.parse(JSON.stringify(expItems)),total:expItems.reduce((s,i)=>s+itemTHB(i,+v('expRate')||1),0),savedAt:todayISO()};
-  savedExp.unshift(rec);save();renderExpSaved();
+  savedExp.unshift(rec);localStorage.setItem('expDocLast',rec.doc||'');save();renderExpSaved();
   document.getElementById('expDoc').value=nextExpDocNo();
   toast('บันทึกใบเบิกแล้ว')
 }
@@ -1984,6 +1984,7 @@ async function expensePDF(send){
   const {jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const FONT=ensureThaiFont(doc)?'Sarabun':'helvetica';
   const ML=15,PW=180;let y=14;const cur=v('expCur'),rate=+v('expRate')||1;
+  if(v('expDoc'))localStorage.setItem('expDocLast',v('expDoc')); // จำเลขล่าสุดแม้แค่กดออก PDF
   const T=(t,x,yy,s=9,st='normal',al)=>{doc.setFontSize(s);doc.setFont(FONT,st);doc.text(String(t),x,yy,al?{align:al}:undefined)};
   T('CAE ASIA LTD.',ML+PW/2,y,13,'bold','center');y+=6;T('EXPENSE REPORT',ML+PW/2,y,10,'normal','center');y+=9;
   T(`Doc No.: ${v('expDoc')}`,ML,y,8);T(`Date: ${fmtEn(v('expDate'))}`,ML+PW/2,y,8);y+=5;
@@ -2029,11 +2030,16 @@ function nextDocNo(){
   const n=savedExp.filter(r=>r.type==='general'&&(r.doc||'').includes(String(y))).length+1;
   return `ACC-MGM-${y}${String(n).padStart(3,'0')}`;
 }
-// เลขที่เอกสารใบเบิกเดินทาง — รันอัตโนมัติ + จำ (นับจากใบเดินทางที่บันทึกไว้ในปีนั้น)
+// เลขที่เอกสารใบเบิกเดินทาง — นับต่อจากเลขสูงสุดที่เคยใช้ (คงรูปแบบเดิม เช่น ...006 → ...007); จำแม้กดออก PDF เฉย ๆ
 function nextExpDocNo(){
   const y=new Date().getFullYear();
-  const n=savedExp.filter(r=>r.type==='travel'&&(r.doc||'').includes('ACC-TRV-'+y)).length+1;
-  return `ACC-TRV-${y}${String(n).padStart(3,'0')}`;
+  const cands=[];
+  savedExp.forEach(r=>{if(r.type==='travel'&&r.doc)cands.push(r.doc)});
+  const last=localStorage.getItem('expDocLast'); if(last)cands.push(last);
+  let best=null,bestN=-1;
+  cands.forEach(doc=>{const m=String(doc).match(/^(.*?)(\d+)(\D*)$/);if(m){const n=+m[2];if(n>bestN){bestN=n;best=m}}});
+  if(best)return best[1]+String(bestN+1).padStart(best[2].length,'0')+best[3];
+  return `ACC-TRV-${y}001`;
 }
 let gItems=[];
 let gReceiptImgs=[]; // รูปบิลที่สแกน (แนบใน PDF)
