@@ -1113,7 +1113,7 @@ const SHEET_SCHEMA={
   trips:['id','name','dest','dates','segments_json'],
   pets:['id','name','species','breed','dob','gender','photo_url'],
   pet_records:['id','pet_id','type','date','detail','next_date','doc_url','amount','gcal_id'],
-  location_log:['date','location','country','city'],
+  location_log:['date','location','country','city','checkins_json'],
   expense_claims:['id','type','date','doc_no','data_json','pdf_url'],
   food_logs:['id','date','timestamp','name','calories','sugar_g','is_drink','drink_size_ml','note'],
   daily_stats:['date','weight_kg','steps','blood_sugar_mgdl','blood_sugar_time'],
@@ -1546,10 +1546,11 @@ function renderToday(){
   document.getElementById('todayDate').textContent=t.toLocaleDateString('th-TH',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   // check-in banner
   const checked=locLog.find(l=>l.date===iso);
-  document.getElementById('checkinBanner').innerHTML=checked?'':
+  const hasCk=checked&&dayCheckins(checked).length;
+  document.getElementById('checkinBanner').innerHTML=hasCk?'':
     `<div class="checkin-banner" onclick="goto('loc')" style="cursor:pointer"><span style="font-size:24px">📍</span><div style="flex:1"><div class="tt">ยังไม่ได้ check-in วันนี้</div><div class="dd">แตะเพื่อบันทึกว่าวันนี้อยู่ที่ไหน</div></div><span style="font-size:18px">›</span></div>`;
   // where am I — location_log first, then trip segment
-  let where=checked?(checked.city?`${checked.location} · ${checked.city}`:checked.location):'', what='';
+  let where=hasCk?summarizeDay(checked):'', what='';
   for(const tr of trips){for(const s of (tr.segments||[])){if(s.date===iso){if(!where)where=s.location||tr.dest||'';what=`✈️ ${tr.name}: ${s.title||''}`;break}}}
   document.getElementById('todayWhere').textContent=where||'— ยังไม่ระบุ —';
   document.getElementById('todayWhat').textContent=what;
@@ -2849,24 +2850,47 @@ async function pushPetRecToGCal(r){
 
 // ══════════════════ LOCATION LOG + DAILY CHECK-IN ══════════════════
 function toggleAbroad(){const w=document.getElementById('abroadWrap');w.style.display=w.style.display==='none'?'block':'none'}
+// ── check-in ได้หลายครั้งต่อวัน (เช้า/บ่าย) ──
+function ckHalf(time){const h=parseInt(String(time||'').slice(0,2),10);return (isNaN(h)||h<12)?'เช้า':'บ่าย'}
+function dayCheckins(day){ // คืน array check-in ของวัน (แปลงข้อมูลเก่าที่มีจุดเดียวให้เป็น record)
+  if(!day)return[];
+  if(Array.isArray(day.checkins)&&day.checkins.length)return day.checkins.slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+  if(day.location)return[{id:'legacy-'+day.date,time:'',location:day.location,city:day.city||'',ts:0}];
+  return[];
+}
+function summarizeDay(day){ // "เช้า 🏙️กรุงเทพ · บ่าย 🌿เขาใหญ่"
+  const cks=dayCheckins(day);if(!cks.length)return'';
+  if(cks.length===1&&!cks[0].time)return `${locIcon(cks[0].location)} ${cks[0].location}${cks[0].city?' ('+cks[0].city+')':''}`;
+  const half={};cks.forEach(c=>half[ckHalf(c.time)]=c);
+  return ['เช้า','บ่าย'].filter(h=>half[h]).map(h=>{const c=half[h];return `${h} ${locIcon(c.location)}${c.location}${c.city?'('+c.city+')':''}`}).join(' · ');
+}
 function pickLoc(location,city=''){
   if(!location)return toast('กรุณาระบุสถานที่');
-  const iso=todayISO();
-  const country=location==='ต่างประเทศ'?(city||'ต่างประเทศ'):'ไทย';
-  const rec={date:iso,location,country,city:location==='ต่างประเทศ'?'':city||''};
-  if(location==='ต่างประเทศ'&&city&&!['จีน','ญี่ปุ่น'].includes(city)){rec.country='ต่างประเทศ';rec.city=city}
-  const ex=locLog.find(l=>l.date===iso);
-  if(ex)Object.assign(ex,rec);else locLog.push(rec);
+  const iso=todayISO(), now=new Date();
+  const time=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  let country=location==='ต่างประเทศ'?(city||'ต่างประเทศ'):'ไทย', cCity=location==='ต่างประเทศ'?'':(city||'');
+  if(location==='ต่างประเทศ'&&city&&!['จีน','ญี่ปุ่น'].includes(city)){country='ต่างประเทศ';cCity=city}
+  let day=locLog.find(l=>l.date===iso);
+  if(!day){day={date:iso,location:'',country:'ไทย',city:'',checkins:[]};locLog.push(day)}
+  if(!Array.isArray(day.checkins))day.checkins=dayCheckins(day); // migrate จุดเดียว → array
+  day.checkins.push({id:uid(),time,location,city:cCity,ts:Date.now()});
+  day.location=location;day.city=cCity;day.country=country; // ระดับวัน = ครั้งล่าสุด (ตำแหน่งปัจจุบัน)
   save();renderLoc();renderToday();
   if(Notification&&Notification.permission==='default')Notification.requestPermission();
-  toast(`✓ บันทึก: วันนี้อยู่ ${location}${city?' ('+city+')':''}`);
+  toast(`✓ เช็คอิน ${time}: ${location}${city?' ('+city+')':''}`);
+}
+async function recheckLoc(){ // ดึงล่าสุดจากคลาวด์ + รีเฟรช (แก้เคสเช็คอินแล้วยังขึ้นว่ายังไม่เช็คอิน)
+  try{if(cloudReady())await cloudPull();toast('🔄 อัปเดตสถานะแล้ว')}catch(e){toast('รีเฟรช (ออฟไลน์)')}
+  renderToday();renderLoc();
 }
 function renderLoc(){
   const iso=todayISO();
   const t=locLog.find(l=>l.date===iso);
-  document.getElementById('locTodayCard').innerHTML=t?
-    `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:30px">${locIcon(t.location)}</span><div><div style="font-weight:800;font-size:15px;color:var(--navy)">วันนี้อยู่: ${esc(t.location)}${t.city?' · '+esc(t.city):''}</div><div style="font-size:11.5px;color:var(--muted)">${t.country!=='ไทย'?esc(t.country):'check-in แล้ว ✓ (เลือกใหม่เพื่อแก้ไข)'}</div></div></div>`
-    :`<div style="display:flex;align-items:center;gap:10px"><span style="font-size:30px">❓</span><div style="font-weight:800;color:var(--orange)">ยังไม่ได้ check-in วันนี้</div></div>`;
+  const cks=dayCheckins(t);
+  const reBtn=`<button class="btn ghost sm" onclick="recheckLoc()" style="white-space:nowrap;align-self:flex-start">🔄 เช็กใหม่</button>`;
+  document.getElementById('locTodayCard').innerHTML=cks.length?
+    `<div style="display:flex;align-items:flex-start;gap:10px"><span style="font-size:30px">${locIcon(t.location)}</span><div style="flex:1"><div style="font-weight:800;font-size:15px;color:var(--navy)">วันนี้: ${esc(summarizeDay(t))}</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">${cks.map(c=>`${c.time?esc(c.time)+' ':''}${locIcon(c.location)} ${esc(c.location)}${c.city?' ('+esc(c.city)+')':''}`).join('<br>')}</div><div style="font-size:11px;color:var(--muted);margin-top:4px">check-in แล้ว ${cks.length} ครั้ง ✓ (เลือกสถานที่เพื่อเพิ่มครั้งใหม่)</div></div>${reBtn}</div>`
+    :`<div style="display:flex;align-items:center;gap:10px"><span style="font-size:30px">❓</span><div style="flex:1;font-weight:800;color:var(--orange)">ยังไม่ได้ check-in วันนี้</div>${reBtn}</div>`;
   const el=document.getElementById('locList');
   const list=locLog.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30);
   el.innerHTML=list.length?'':'<div class="empty">ยังไม่มีประวัติ</div>';
@@ -3381,8 +3405,26 @@ const SYNC={
     put:rows=>{petRecs=rows.filter(r=>r.id).map(r=>({id:r.id,pet_id:r.pet_id,type:r.type,date:r.date,detail:r.detail,next_date:r.next_date,doc_url:r.doc_url,amount:r.amount||'',gcal_id:r.gcal_id||''}))}
   },
   location_log:{
-    get:()=>locLog.map(l=>({date:l.date,location:l.location||'',country:l.country||'',city:l.city||''})),
-    put:rows=>{locLog=rows.filter(r=>r.date).map(r=>({date:r.date,location:r.location,country:r.country,city:r.city}))}
+    get:()=>locLog.map(l=>({date:l.date,location:l.location||'',country:l.country||'',city:l.city||'',checkins_json:JSON.stringify(l.checkins||dayCheckins(l))})),
+    put:rows=>{ // MERGE รวมทุก check-in ตาม id แทนการเขียนทับ — กันเช็คอินหายตอน sync ข้ามเครื่อง
+      const byDate={};locLog.forEach(l=>byDate[l.date]=l);
+      rows.filter(r=>r.date).forEach(r=>{
+        let cks=[];try{cks=JSON.parse(r.checkins_json||'[]')||[]}catch(e){}
+        const ex=byDate[r.date];
+        if(ex){
+          const cur=Array.isArray(ex.checkins)?ex.checkins:dayCheckins(ex);
+          const seen=new Set(cur.map(c=>c.id));
+          cks.forEach(c=>{if(c&&c.id&&!seen.has(c.id)){cur.push(c);seen.add(c.id)}});
+          cur.sort((a,b)=>(a.ts||0)-(b.ts||0));ex.checkins=cur;
+          const last=cur[cur.length-1];if(last){ex.location=last.location;ex.city=last.city}
+          if(r.country&&!ex.country)ex.country=r.country;
+        }else{
+          cks.sort((a,b)=>(a.ts||0)-(b.ts||0));const last=cks[cks.length-1];
+          byDate[r.date]={date:r.date,location:r.location||(last&&last.location)||'',country:r.country||'ไทย',city:r.city||(last&&last.city)||'',checkins:cks.length?cks:(r.location?[{id:'legacy-'+r.date,time:'',location:r.location,city:r.city||'',ts:0}]:[])};
+        }
+      });
+      locLog=Object.values(byDate).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    }
   },
   expense_claims:{
     get:()=>savedExp.map(r=>({id:r.id,type:r.type||'travel',date:r.date||'',doc_no:r.doc||'',data_json:JSON.stringify(r),pdf_url:r.pdf_url||''})),
