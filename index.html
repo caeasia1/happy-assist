@@ -359,7 +359,30 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
 <section class="page" id="page-proj">
   <div class="page-title">โปรเจค 📁</div>
   <div class="page-desc">รวบรวมโปรเจคที่กำลังทำอยู่</div>
-  <button class="btn purple block" onclick="openProj()">+ เพิ่มโปรเจค</button>
+
+  <!-- ── Status Dashboard (Google Sheet กลาง — ตัวเดียวกับ CAE Dashboard) ── -->
+  <style>
+    .sd-proj{display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid #eee;border-radius:12px;margin-top:8px;cursor:pointer;background:#fff}
+    .sd-proj:active{background:#FFF1E8}
+    .sd-proj b{flex:1;font-size:14px}
+    .sd-chev{color:#FF6B00;width:12px}
+    .sd-mini{display:inline-flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 5px;border-radius:10px;color:#fff;font-size:11px;font-weight:700;margin-left:3px}
+    .sd-meta{font-size:11px;color:#98a1ab}
+    .sd-tasks{margin:4px 0 4px 10px;padding-left:10px;border-left:2px solid #FFD9BD}
+    .sd-task{padding:8px 10px;border:1px solid #f0f0f0;border-radius:10px;margin-top:6px;background:#fafbfc}
+    .sd-task b{font-size:13px}
+    .sd-badge{display:inline-block;padding:1px 8px;border-radius:9px;color:#fff;font-size:11px;font-weight:700;margin-right:6px}
+    .sd-line{font-size:12px;color:#4a5560;margin-top:3px}
+    .sd-line.dim{color:#98a1ab}
+  </style>
+  <div class="card">
+    <h3>📊 Status Dashboard <button class="btn ghost sm" style="float:right" onclick="sdLoad()">↻ รีเฟรช</button></h3>
+    <div class="hint">สถานะงานทุก project จาก Google Sheet กลาง — แตะชื่อ project เพื่อดูงานย่อย</div>
+    <div class="status" id="sdStatus"></div>
+    <div id="sdList"></div>
+  </div>
+
+  <button class="btn purple block mt12" onclick="openProj()">+ เพิ่มโปรเจค</button>
 
   <div class="card mt12">
     <h3>🤖 วางอัปเดตจาก Claude</h3>
@@ -1292,11 +1315,57 @@ function goto(p){
   if(p==='money')renderMoney();
   if(p==='pets')renderPets();
   if(p==='loc')renderLoc();
-  if(p==='proj')renderProj();
+  if(p==='proj'){renderProj();sdLoad()}
   if(p==='health')renderHealthPage();
   if(p==='mail')renderMail();
   if(p==='work')renderWork();
 }
+
+// ══════════════ STATUS DASHBOARD (Google Sheet กลาง) ══════════════
+const SD_URL='https://script.google.com/macros/s/AKfycbwJa4aooPvxwqnVdrUtHN2zNcj25eR2vyn1TeWWnvGRjTqu9QBd4Mqm-GiHaOmOljUC/exec';
+const SD_TOKEN='AEm6d-Ngmjkoyhogdbf-7hom6d-Ngmjkoyhocxixi;om6d-Ngmjkoyhofy[wx';
+const SD_COLORS={todo:'#9AA3AF',doing:'#2E7CF6',done:'#16A34A',blocked:'#E11D48'};
+const SD_LABELS={todo:'To do',doing:'Doing',done:'Done',blocked:'Blocked'};
+let sdRows=[],sdNames=[];const sdOpen=new Set();
+function sdEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function sdDate(v){const d=new Date(v);return isNaN(d)?'':d.toLocaleString('th-TH',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}
+async function sdLoad(){
+  const st=document.getElementById('sdStatus');if(!st)return;
+  st.textContent='กำลังโหลด...';
+  try{
+    const r=await fetch(SD_URL+'?action=read&token='+encodeURIComponent(SD_TOKEN)+'&_='+Date.now());
+    const d=await r.json();
+    if(d&&d.ok===false)throw new Error(d.message||'error '+d.error);
+    sdRows=Array.isArray(d)?d:[];st.textContent='';sdRender();
+  }catch(e){st.textContent='โหลดไม่สำเร็จ: '+e.message}
+}
+function sdRender(){
+  const box=document.getElementById('sdList');if(!box)return;
+  if(!sdRows.length){box.innerHTML='<div class="hint">ยังไม่มีข้อมูลงาน</div>';return}
+  const g={};sdRows.forEach(r=>{(g[r.project||'-']=g[r.project||'-']||[]).push(r)});
+  const latest=t=>Math.max.apply(null,t.map(x=>+new Date(x.updated_at||0)||0));
+  sdNames=Object.keys(g).sort((a,b)=>latest(g[b])-latest(g[a]));
+  box.innerHTML=sdNames.map((name,i)=>{
+    const t=g[name],open=sdOpen.has(name);
+    const c={todo:0,doing:0,done:0,blocked:0};t.forEach(x=>{if(c[x.status]!=null)c[x.status]++});
+    const minis=['blocked','doing','todo','done'].filter(s=>c[s]>0)
+      .map(s=>`<span class="sd-mini" style="background:${SD_COLORS[s]}">${c[s]}</span>`).join('');
+    let h=`<div class="sd-proj" onclick="sdToggle(${i})"><span class="sd-chev">${open?'▾':'▸'}</span><b>${sdEsc(name)}</b>${minis}<span class="sd-meta">${c.done}/${t.length}</span></div>`;
+    if(open){
+      const order={blocked:0,doing:1,todo:2,done:3};
+      const rows=t.slice().sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)||new Date(b.updated_at||0)-new Date(a.updated_at||0));
+      h+='<div class="sd-tasks">'+rows.map(x=>{
+        let s=`<div class="sd-task"><div><span class="sd-badge" style="background:${SD_COLORS[x.status]||'#999'}">${SD_LABELS[x.status]||sdEsc(x.status)}</span><b>${sdEsc(x.subtask)}</b></div>`;
+        if(x.next_step)s+=`<div class="sd-line">➡ ${sdEsc(x.next_step)}</div>`;
+        if(x.output_summary)s+=`<div class="sd-line dim">${sdEsc(x.output_summary)}</div>`;
+        s+=`<div class="sd-line dim">${x.file_link&&x.file_link!=='-'?sdEsc(x.file_link)+' · ':''}${sdDate(x.updated_at)}</div></div>`;
+        return s;
+      }).join('')+'</div>';
+    }
+    return h;
+  }).join('');
+}
+function sdToggle(i){const n=sdNames[i];if(sdOpen.has(n))sdOpen.delete(n);else sdOpen.add(n);sdRender()}
 
 // ══════════════════ SHEETS ══════════════════
 function openSheet(id){
@@ -2025,22 +2094,18 @@ function setClaimType(b){
 }
 function onGReq(){document.getElementById('gReqOtherWrap').style.display=document.getElementById('gReq').value==='_other'?'block':'none'}
 function gReqName(){const s=document.getElementById('gReq').value;return s==='_other'?document.getElementById('gReqOther').value.trim():s}
+// เลขที่เอกสาร — เลขรันชุดเดียวทั้งระบบ (ทั่วไป+เดินทาง) นับต่อจากเลขสูงสุดที่เคยใช้ คงรูปแบบเดิม; จำแม้กดออก PDF
 function nextDocNo(){
   const y=new Date().getFullYear();
-  const n=savedExp.filter(r=>r.type==='general'&&(r.doc||'').includes(String(y))).length+1;
-  return `ACC-MGM-${y}${String(n).padStart(3,'0')}`;
-}
-// เลขที่เอกสารใบเบิกเดินทาง — นับต่อจากเลขสูงสุดที่เคยใช้ (คงรูปแบบเดิม เช่น ...006 → ...007); จำแม้กดออก PDF เฉย ๆ
-function nextExpDocNo(){
-  const y=new Date().getFullYear();
   const cands=[];
-  savedExp.forEach(r=>{if(r.type==='travel'&&r.doc)cands.push(r.doc)});
+  savedExp.forEach(r=>{if(r.doc)cands.push(r.doc)});
   const last=localStorage.getItem('expDocLast'); if(last)cands.push(last);
   let best=null,bestN=-1;
   cands.forEach(doc=>{const m=String(doc).match(/^(.*?)(\d+)(\D*)$/);if(m){const n=+m[2];if(n>bestN){bestN=n;best=m}}});
   if(best)return best[1]+String(bestN+1).padStart(best[2].length,'0')+best[3];
-  return `ACC-TRV-${y}001`;
+  return `ACC-MGM-${y}001`;
 }
+function nextExpDocNo(){return nextDocNo();} // ใบเบิกเดินทางใช้เลขรันชุดเดียวกับใบเบิกทั่วไป
 let gItems=[];
 let gReceiptImgs=[]; // รูปบิลที่สแกน (แนบใน PDF)
 function addGItem(d={}){gItems.push({vendor:d.vendor||'',description:d.description||'',amount:d.amount||'',note:d.note||''});renderGItems()}
