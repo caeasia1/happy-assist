@@ -423,6 +423,8 @@ details.help ol{margin:6px 0 0 18px;line-height:1.7}
         <div><label>แผนก</label>
           <select id="gDept"><option>Mgm</option><option>HR</option><option>Procurement</option><option>Account</option><option>Sales</option><option>Fab&amp;Install</option><option>Production</option></select>
         </div>
+        <div><label>สกุลเงิน</label><input id="gCur" value="THB" placeholder="เช่น USD, EUR" onchange="renderGItems()"></div>
+        <div><label>อัตราแลกเปลี่ยน (ต่อ 1 หน่วย → บาท)</label><input type="number" inputmode="decimal" step="0.0001" id="gRate" value="1" oninput="updateGTotal()"></div>
       </div>
       <div id="gReqOtherWrap" style="display:none" class="mt8"><label>ระบุชื่อผู้ขอเบิก</label><input id="gReqOther" placeholder="ชื่อ-สกุล"></div>
       <div class="field mt8"><label>วัตถุประสงค์</label><textarea id="gPurpose" placeholder="ระบุวัตถุประสงค์การเบิกเงิน"></textarea></div>
@@ -2002,6 +2004,8 @@ function loadExp(id){
     document.getElementById('gRemark').value=r.remark||'';
     document.getElementById('gApprover').value=r.approver||'';
     document.getElementById('gApproverPos').value=r.approverPos||'';
+    document.getElementById('gCur').value=r.cur||'THB';
+    document.getElementById('gRate').value=r.rate||1;
     gItems=JSON.parse(JSON.stringify(r.items||[]));renderGItems();
     setClaimType(document.querySelector('#page-exp .tabs button[data-c="general"]'));
   }else{
@@ -2111,14 +2115,19 @@ function nextDocNo(){
 function nextExpDocNo(){return nextDocNo();} // ใบเบิกเดินทางใช้เลขรันชุดเดียวกับใบเบิกทั่วไป
 let gItems=[];
 let gReceiptImgs=[]; // รูปบิลที่สแกน (แนบใน PDF)
-function addGItem(d={}){gItems.push({vendor:d.vendor||'',description:d.description||'',amount:d.amount||'',note:d.note||''});renderGItems()}
-function updateGTotal(){document.getElementById('gTotal').textContent=fmtNum(gItems.reduce((s,i)=>s+(+i.amount||0),0))}
+function addGItem(d={}){const cur=(document.getElementById('gCur')?.value||'THB').trim().toUpperCase();gItems.push({vendor:d.vendor||'',description:d.description||'',amount:d.amount||'',note:d.note||'',thb:d.thb!==undefined?d.thb:(cur===''||cur==='THB'||cur==='บาท')});renderGItems()}
+function gRateVal(){return +(document.getElementById('gRate')?.value)||1}
+function updateGTotal(){const rate=gRateVal();let total=0;gItems.forEach((it,i)=>{const thb=itemTHB(it,rate);total+=thb;const el=document.getElementById('gthb'+i);if(el)el.textContent=fmtNum(thb)});document.getElementById('gTotal').textContent=fmtNum(total)}
 function renderGItems(){
   const el=document.getElementById('gItems');el.innerHTML='';
+  const cur=(document.getElementById('gCur')?.value||'THB').trim()||'THB', rate=gRateVal();
+  const foreign=!(cur==='THB'||cur==='บาท');
   gItems.forEach((it,i)=>{
+    const curCell=foreign?`<select style="max-width:82px" onchange="gItems[${i}].thb=(this.value==='THB');updateGTotal()"><option value="cur" ${!it.thb?'selected':''}>${esc(cur)}</option><option value="THB" ${it.thb?'selected':''}>บาท</option></select>`:'';
+    const thbLine=foreign?`<div style="text-align:right;font-size:12px;color:var(--muted);margin-top:4px">= <b id="gthb${i}">${fmtNum(itemTHB(it,rate))}</b> ฿</div>`:'';
     el.insertAdjacentHTML('beforeend',`<div class="item"><div class="body">
       <div class="row"><input value="${esc(it.vendor)}" placeholder="ชื่อร้าน/บริษัท" onchange="gItems[${i}].vendor=this.value"><input value="${esc(it.description)}" placeholder="เช่น ค่าน้ำมัน, ค่าอาหาร" onchange="gItems[${i}].description=this.value"></div>
-      <div class="row mt8"><input type="number" step="0.01" value="${it.amount}" placeholder="0.00" oninput="gItems[${i}].amount=this.value;updateGTotal()"><input value="${esc(it.note)}" placeholder="หมายเหตุ (เว้นว่าง)" onchange="gItems[${i}].note=this.value"></div>
+      <div class="row mt8"><input type="number" inputmode="decimal" step="0.01" value="${it.amount}" placeholder="0.00" oninput="gItems[${i}].amount=this.value;updateGTotal()">${curCell}<input value="${esc(it.note)}" placeholder="หมายเหตุ (เว้นว่าง)" onchange="gItems[${i}].note=this.value"></div>${thbLine}
       </div><div class="acts"><button class="mini del" onclick="gItems.splice(${i},1);renderGItems()">🗑</button></div></div>`);
   });
   if(!gItems.length)el.innerHTML='<div class="empty">ยังไม่มีรายการ — สแกนบิลหรือเพิ่มเอง</div>';
@@ -2141,16 +2150,20 @@ async function scanGBill(files){
 }
 function clearG(){
   if(!confirm('ล้างข้อมูลใบเบิก?'))return;
-  gItems=[];gReceiptImgs=[];renderGItems();
+  gItems=[];gReceiptImgs=[];
+  document.getElementById('gCur').value='THB';document.getElementById('gRate').value=1;
+  renderGItems();
   ['gPurpose','gRemark','gApprover','gApproverPos','gReqOther'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('gDoc').value=nextDocNo();
   document.getElementById('gDate').value=todayISO();
 }
 function saveGeneralClaim(){
   if(!gItems.length)return toast('ยังไม่มีรายการ');
+  const rate=gRateVal();
   const rec={id:uid(),type:'general',doc:v('gDoc'),date:v('gDate'),name:gReqName(),dept:v('gDept'),
     purpose:v('gPurpose'),remark:v('gRemark'),approver:v('gApprover'),approverPos:v('gApproverPos'),
-    items:JSON.parse(JSON.stringify(gItems)),total:gItems.reduce((s,i)=>s+(+i.amount||0),0),savedAt:todayISO()};
+    cur:v('gCur')||'THB',rate,
+    items:JSON.parse(JSON.stringify(gItems)),total:gItems.reduce((s,i)=>s+itemTHB(i,rate),0),savedAt:todayISO()};
   savedExp.unshift(rec);save();renderExpSaved();toast('บันทึกใบเบิกแล้ว 📋');
 }
 function ensureThaiFont(doc){
@@ -2182,6 +2195,8 @@ async function generalPDF(send){
   T(`ผู้ขอเบิก: ${gReqName()}`,ML,y,9);T(`แผนก: ${v('gDept')}`,ML+PW/2,y,9);y+=6;
   const pl=doc.splitTextToSize(`วัตถุประสงค์: ${v('gPurpose')}`,PW);
   doc.setFontSize(9);doc.setFont(FONT,'normal');doc.text(pl,ML,y);y+=pl.length*4.5+3;
+  const gpRate=gRateVal(), gpCur=(v('gCur')||'THB'), gpForeign=!(gpCur==='THB'||gpCur==='บาท');
+  if(gpForeign){T(`สกุลเงิน: ${gpCur}   อัตราแลกเปลี่ยน: ${gpRate} บาท/${gpCur}`,ML,y,9,'bold');y+=6}
   // items table
   const cw=[10,52,63,28,27],RH=7;
   let x=ML;
@@ -2189,12 +2204,13 @@ async function generalPDF(send){
   gItems.filter(it=>it.amount||it.vendor||it.description).forEach((it,ri)=>{
     if(y+RH>270){doc.addPage();y=16}
     const bg=ri%2?245:255;x=ML;
-    [String(ri+1),it.vendor||'',it.description||'',fmtNum(it.amount),it.note||''].forEach((c,i)=>{
+    const desc=(it.description||'')+((gpForeign&&!it.thb&&it.amount)?` [${fmtNum(it.amount)} ${gpCur}]`:'');
+    [String(ri+1),it.vendor||'',desc,fmtNum(itemTHB(it,gpRate)),it.note||''].forEach((c,i)=>{
       cell(c,x,y,cw[i],RH,bg,i===0?'center':i===3?'right':'left');x+=cw[i]});
     y+=RH;
   });
   cell('รวมทั้งสิ้น / Total',ML,y,cw[0]+cw[1]+cw[2],RH,221,'right','bold');
-  cell(fmtNum(gItems.reduce((s,i)=>s+(+i.amount||0),0))+' บาท',ML+cw[0]+cw[1]+cw[2],y,cw[3],RH,221,'right','bold');
+  cell(fmtNum(gItems.reduce((s,i)=>s+itemTHB(i,gpRate),0))+' บาท',ML+cw[0]+cw[1]+cw[2],y,cw[3],RH,221,'right','bold');
   cell('',ML+cw[0]+cw[1]+cw[2]+cw[3],y,cw[4],RH,221);y+=RH+6;
   if(v('gRemark')){T(`หมายเหตุ: ${v('gRemark')}`,ML,y,9);y+=8}
   // signatures
@@ -2210,7 +2226,7 @@ async function generalPDF(send){
   });
   appendReceiptPages(doc,gReceiptImgs,FONT);
   const fname=`PaymentRequest_${v('gDoc')||'ACC-MGM'}.pdf`;
-  if(send)await sendPdfViaGmail(btoa(doc.output()),fname,'ใบเบิกเงิน '+v('gDoc'),`เรียน ผู้เกี่ยวข้อง\n\nแนบใบเบิกเงิน ${v('gDoc')} ยอดรวม ${fmtNum(gItems.reduce((s,i)=>s+(+i.amount||0),0))} บาท\n\nส่งจากแอป Happy Assist`);
+  if(send)await sendPdfViaGmail(btoa(doc.output()),fname,'ใบเบิกเงิน '+v('gDoc'),`เรียน ผู้เกี่ยวข้อง\n\nแนบใบเบิกเงิน ${v('gDoc')} ยอดรวม ${fmtNum(gItems.reduce((s,i)=>s+itemTHB(i,gpRate),0))} บาท\n\nส่งจากแอป Happy Assist`);
   else doc.save(fname);
 }
 // ── Google Drive: folder import ──
