@@ -1091,12 +1091,14 @@ const GAuth={
     return this.client;
   },
   async getToken(){
+    if(!this.token){try{const s=JSON.parse(localStorage.getItem('gauth_tok')||'null');if(s&&s.t){this.token=s.t;this.exp=s.e||0}}catch(e){}} // กู้ token ที่เคยได้ (กัน sign-in ซ้ำทุกครั้งที่เปิดแอป)
     if(this.token&&Date.now()<this.exp-60000)return this.token;
     const c=this.ensureClient();
     return new Promise((res,rej)=>{
       c.callback=t=>{
         if(t.error){setCloudUI('err');return rej(new Error(t.error_description||t.error))}
         this.token=t.access_token;this.exp=Date.now()+((+t.expires_in||3600)*1000);
+        try{localStorage.setItem('gauth_tok',JSON.stringify({t:this.token,e:this.exp}))}catch(e){} // เก็บ token ไว้ใช้ข้าม reload (~1 ชม.)
         setCloudUI('on');res(this.token);
       };
       try{c.requestAccessToken({prompt:(cfg.scopeV!==SCOPE_V||!cfg.consented)?'consent':''})}catch(e){rej(e)}
@@ -3358,9 +3360,9 @@ async function syncNow(){
     await GSheets.ensureStructure(cfg.sheetsId);
     // ส่งของที่ค้าง (เพิ่งบันทึกในเครื่องนี้) ขึ้นก่อน แล้วค่อยดึงล่าสุดลงมา
     if(pushTimer){clearTimeout(pushTimer);pushTimer=null}
+    const n=await cloudPull();                 // ดึง+merge ก่อน — ได้ข้อมูลจาก Sheet เข้าเครื่องก่อน (กันดันของว่างทับ)
     const map={};Object.keys(SYNC).forEach(k=>map[k]=SYNC[k].get());
-    await GSheets.pushAll(map);
-    const n=await cloudPull();
+    await GSheets.pushAll(map);                 // แล้วค่อยดันชุดที่รวมแล้วขึ้น — ไม่ลบของเครื่องอื่น
     setCloudUI('on');updateCloudPanel();
     toast('🔄 ข้อมูลตรงกันแล้ว ('+n+' รายการ)');
   }catch(e){setCloudUI('err');toast('sync ไม่สำเร็จ: '+e.message)}
@@ -3372,37 +3374,39 @@ document.addEventListener('visibilitychange',()=>{
     cloudPull().then(()=>setCloudUI('on')).catch(()=>{});
   }
 });
+// รวมข้อมูลตาม key (union) — ดึงลงมาแล้ว "รวม" กับของในเครื่อง ไม่ "เขียนทับ" → กันข้อมูลหายเวลา sync ข้ามเครื่อง
+function mergeById(cur,incoming,key='id'){const by={};(cur||[]).forEach(x=>{const k=x&&x[key];if(k!=null&&k!=='')by[k]=x});(incoming||[]).forEach(x=>{const k=x&&x[key];if(k!=null&&k!=='')by[k]=x});return Object.values(by)}
 const SYNC={
   tasks:{
     get:()=>tasks.map(t=>({id:t.id,title:t.title||'',date:t.date||'',time:t.time||'',priority:t.priority||'',status:t.status||'รอ',notes:t.note||'',project:t.project||'',gcal_id:t.gcal_id||''})),
-    put:rows=>{tasks=rows.filter(r=>r.id).map(r=>({id:r.id,title:r.title,date:r.date,time:r.time,priority:r.priority||'medium',status:r.status||'รอ',done:r.status==='เสร็จ',note:r.notes||'',project:r.project||'',gcal_id:r.gcal_id||''}))}
+    put:rows=>{tasks=mergeById(tasks,rows.filter(r=>r.id).map(r=>({id:r.id,title:r.title,date:r.date,time:r.time,priority:r.priority||'medium',status:r.status||'รอ',done:r.status==='เสร็จ',note:r.notes||'',project:r.project||'',gcal_id:r.gcal_id||''})))}
   },
   projects:{
     get:()=>projects.map(p=>({id:p.id,name:p.name||'',status:p.status||'',description:p.desc||'',updated:p.updated||'',due:p.due||'',progress:p.progress||0})),
-    put:rows=>{projects=rows.filter(r=>r.id).map(r=>({id:r.id,name:r.name,status:r.status||'กำลังทำ',desc:r.description||'',updated:r.updated||'',due:r.due||'',progress:+r.progress||0}))}
+    put:rows=>{projects=mergeById(projects,rows.filter(r=>r.id).map(r=>({id:r.id,name:r.name,status:r.status||'กำลังทำ',desc:r.description||'',updated:r.updated||'',due:r.due||'',progress:+r.progress||0})))}
   },
   expenses:{
     get:()=>money.map(m=>({id:m.id,date:m.date||'',amount:m.amount||0,category:m.category||'',subcategory:m.subcategory||'',detail:m.detail||'',payment_method:m.payment_method||'',location:m.location||'',image_url:m.image_url||''})),
-    put:rows=>{money=rows.filter(r=>r.id).map(r=>({id:r.id,date:r.date,amount:+r.amount||0,category:r.category,subcategory:r.subcategory,detail:r.detail,payment_method:r.payment_method,location:r.location,image_url:r.image_url}))}
+    put:rows=>{money=mergeById(money,rows.filter(r=>r.id).map(r=>({id:r.id,date:r.date,amount:+r.amount||0,category:r.category,subcategory:r.subcategory,detail:r.detail,payment_method:r.payment_method,location:r.location,image_url:r.image_url})))}
   },
   receipts:{
     get:()=>receipts.map(r=>({id:r.id,date:r.date||'',vendor:r.vendor||'',product:r.item||'',amount:r.amount||'',warranty_date:r.warranty||'',category:r.category||'',receipt_url:r.receipt_url||'',warranty_url:r.warranty_url||'',type:r.type||'receipt',note:r.note||''})),
-    put:rows=>{receipts=rows.filter(r=>r.id).map(r=>{const old=receipts.find(x=>x.id===r.id)||{};
-      return {id:r.id,date:r.date,vendor:r.vendor,item:r.product,amount:r.amount,warranty:r.warranty_date,category:r.category,receipt_url:r.receipt_url,warranty_url:r.warranty_url,type:r.type||'receipt',note:r.note,img:old.img||'',wimg:old.wimg||''}})}
+    put:rows=>{receipts=mergeById(receipts,rows.filter(r=>r.id).map(r=>{const old=receipts.find(x=>x.id===r.id)||{};
+      return {id:r.id,date:r.date,vendor:r.vendor,item:r.product,amount:r.amount,warranty:r.warranty_date,category:r.category,receipt_url:r.receipt_url,warranty_url:r.warranty_url,type:r.type||'receipt',note:r.note,img:old.img||'',wimg:old.wimg||''}}))}
   },
   trips:{
     get:()=>trips.map(t=>({id:t.id,name:t.name||'',dest:t.dest||'',dates:t.dates||'',segments_json:JSON.stringify(t.segments||[])})),
-    put:rows=>{trips=rows.filter(r=>r.id).map(r=>{let seg=[];try{seg=JSON.parse(r.segments_json||'[]')}catch(e){}
-      return {id:r.id,name:r.name,dest:r.dest,dates:r.dates,segments:seg}})}
+    put:rows=>{trips=mergeById(trips,rows.filter(r=>r.id).map(r=>{let seg=[];try{seg=JSON.parse(r.segments_json||'[]')}catch(e){}
+      return {id:r.id,name:r.name,dest:r.dest,dates:r.dates,segments:seg}}))}
   },
   pets:{
     get:()=>pets.map(p=>({id:p.id,name:p.name||'',species:p.species||'',breed:p.breed||'',dob:p.dob||'',gender:p.gender||'',photo_url:p.photo_url||''})),
-    put:rows=>{pets=rows.filter(r=>r.id).map(r=>{const old=pets.find(x=>x.id===r.id)||{};
-      return {id:r.id,name:r.name,species:r.species,breed:r.breed,dob:r.dob,gender:r.gender,photo_url:r.photo_url,photo:old.photo||''}})}
+    put:rows=>{pets=mergeById(pets,rows.filter(r=>r.id).map(r=>{const old=pets.find(x=>x.id===r.id)||{};
+      return {id:r.id,name:r.name,species:r.species,breed:r.breed,dob:r.dob,gender:r.gender,photo_url:r.photo_url,photo:old.photo||''}}))}
   },
   pet_records:{
     get:()=>petRecs.map(r=>({id:r.id,pet_id:r.pet_id,type:r.type||'',date:r.date||'',detail:r.detail||'',next_date:r.next_date||'',doc_url:r.doc_url||'',amount:r.amount||'',gcal_id:r.gcal_id||''})),
-    put:rows=>{petRecs=rows.filter(r=>r.id).map(r=>({id:r.id,pet_id:r.pet_id,type:r.type,date:r.date,detail:r.detail,next_date:r.next_date,doc_url:r.doc_url,amount:r.amount||'',gcal_id:r.gcal_id||''}))}
+    put:rows=>{petRecs=mergeById(petRecs,rows.filter(r=>r.id).map(r=>({id:r.id,pet_id:r.pet_id,type:r.type,date:r.date,detail:r.detail,next_date:r.next_date,doc_url:r.doc_url,amount:r.amount||'',gcal_id:r.gcal_id||''})))}
   },
   location_log:{
     get:()=>locLog.map(l=>({date:l.date,location:l.location||'',country:l.country||'',city:l.city||'',checkins_json:JSON.stringify(l.checkins||dayCheckins(l))})),
@@ -3428,24 +3432,24 @@ const SYNC={
   },
   expense_claims:{
     get:()=>savedExp.map(r=>({id:r.id,type:r.type||'travel',date:r.date||'',doc_no:r.doc||'',data_json:JSON.stringify(r),pdf_url:r.pdf_url||''})),
-    put:rows=>{savedExp=rows.filter(r=>r.id).map(r=>{try{return JSON.parse(r.data_json)}catch(e){return {id:r.id,type:r.type,date:r.date,doc:r.doc_no,items:[],total:0}}})}
+    put:rows=>{savedExp=mergeById(savedExp,rows.filter(r=>r.id).map(r=>{try{return JSON.parse(r.data_json)}catch(e){return {id:r.id,type:r.type,date:r.date,doc:r.doc_no,items:[],total:0}}}))}
   },
   food_logs:{
     get:()=>foodLogs.map(f=>({id:f.id,date:f.date||'',timestamp:f.timestamp||'',name:f.name||'',calories:f.calories||0,sugar_g:f.sugar_g??'',is_drink:f.is_drink?'1':'',drink_size_ml:f.drink_size_ml||'',note:f.note||''})),
-    put:rows=>{foodLogs=rows.filter(r=>r.id).map(r=>({id:r.id,date:r.date,timestamp:+r.timestamp||0,name:r.name,calories:+r.calories||0,sugar_g:r.sugar_g===''?null:+r.sugar_g,is_drink:r.is_drink==='1'||r.is_drink===true,drink_size_ml:+r.drink_size_ml||null,note:r.note||''}))}
+    put:rows=>{foodLogs=mergeById(foodLogs,rows.filter(r=>r.id).map(r=>({id:r.id,date:r.date,timestamp:+r.timestamp||0,name:r.name,calories:+r.calories||0,sugar_g:r.sugar_g===''?null:+r.sugar_g,is_drink:r.is_drink==='1'||r.is_drink===true,drink_size_ml:+r.drink_size_ml||null,note:r.note||''})))}
   },
   daily_stats:{
     get:()=>hstats.map(s=>({date:s.date,weight_kg:s.weight_kg||'',steps:s.steps||'',blood_sugar_mgdl:s.blood_sugar_mgdl||'',blood_sugar_time:s.blood_sugar_time||''})),
-    put:rows=>{hstats=rows.filter(r=>r.date).map(r=>({date:r.date,weight_kg:r.weight_kg?+r.weight_kg:'',steps:r.steps?+r.steps:'',blood_sugar_mgdl:r.blood_sugar_mgdl?+r.blood_sugar_mgdl:'',blood_sugar_time:r.blood_sugar_time||''}))}
+    put:rows=>{hstats=mergeById(hstats,rows.filter(r=>r.date).map(r=>({date:r.date,weight_kg:r.weight_kg?+r.weight_kg:'',steps:r.steps?+r.steps:'',blood_sugar_mgdl:r.blood_sugar_mgdl?+r.blood_sugar_mgdl:'',blood_sugar_time:r.blood_sugar_time||''})),'date')}
   },
   appointments:{
     get:()=>appts.map(a=>({id:a.id,title:a.title||'',date:a.date||'',time:a.time||'',location:a.location||'',source_subject:a.source_subject||'',confirmed:a.confirmed?'1':''})),
-    put:rows=>{appts=rows.filter(r=>r.id).map(r=>({id:r.id,title:r.title,date:r.date,time:r.time,location:r.location,source_subject:r.source_subject,confirmed:r.confirmed==='1'||r.confirmed===true}))}
+    put:rows=>{appts=mergeById(appts,rows.filter(r=>r.id).map(r=>({id:r.id,title:r.title,date:r.date,time:r.time,location:r.location,source_subject:r.source_subject,confirmed:r.confirmed==='1'||r.confirmed===true})))}
   }
 };
-let pushTimer=null;
+let pushTimer=null, cloudPulledOnce=false;
 function cloudPush(){
-  if(!cloudReady())return;
+  if(!cloudReady()||!cloudPulledOnce)return; // ห้ามดันขึ้นก่อน pull ครั้งแรกของ session (กันเครื่องใหม่/ข้อมูลว่างทับ Sheet)
   clearTimeout(pushTimer);
   pushTimer=setTimeout(async()=>{
     try{
@@ -3457,6 +3461,7 @@ function cloudPush(){
 }
 async function cloudPull(){
   const data=await GSheets.pullAll();
+  cloudPulledOnce=true; // pull สำเร็จแล้ว → อนุญาตให้ push ได้
   let pulled=0, pushNeeded=false;
   Object.keys(SYNC).forEach(k=>{
     const rows=data[k]||[];
